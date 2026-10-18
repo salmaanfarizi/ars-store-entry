@@ -64,7 +64,11 @@ from salesreq.abusalim.sa.
   routes. The sheet's route column reads "Direct sale" / "Riyadh warehouse".
 - **Add an item** opens a searchable list grouped by product, with code and unit tags and the
   store's closing stock for that transfer's section.
+- **Invoice no.** for direct sales (optional), saved in a 17th column, `invoice_no`, and shown on
+  the list and the PDF.
 - **PDF** of each transfer with the logo and signature lines, titled by kind.
+- **Day's transfers PDF**: pick a day (any of the last 31) for one PDF of every transfer made on
+  it, then the quantity per item split into route, direct and warehouse.
 
 Retire the old transfer app once this is live, so two apps don't number transfers at once.
 

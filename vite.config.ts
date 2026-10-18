@@ -184,6 +184,7 @@ function devTransfersApi(): Plugin {
           salesman: body.salesman,
           route: body.route,
           requisitionRef: body.requisitionRef,
+          invoiceNo: body.invoiceNo ?? "",
           notes: body.notes,
           createdAt: new Date().toISOString(),
           lines: body.lines.map(({ target: _t, ...l }) => ({ ...l, variance: l.physicalStock - l.systemStock })),
