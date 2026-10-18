@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   fmt,
+  createDay,
   getPasscode,
   loadDaily,
   loadMonth,
@@ -27,6 +28,7 @@ import {
 } from "./api";
 import { DUE_SOON_DAYS, orderDue, pendingOrder, shortfall, stockSignal, type Due } from "./insights";
 import { Transfers } from "./Transfers";
+import { isoToTab, tabToIso } from "./transfers";
 import type { DailyData, DailyRow, DailyWrite, NewItem, OrderEdit } from "./types";
 
 type OrderForm = { qty: string; deliverBy: string; status: string };
@@ -352,6 +354,15 @@ export function App() {
         ) : ready ? (
           <>
             {loadError ? <Notice message={loadError} action={() => void load(activeTab)} /> : null}
+
+            <NewDayCard
+              latestTab={data?.tabs[0] ?? activeTab}
+              dirty={dirty}
+              onCreated={(made, message) => {
+                setSaved(message);
+                setTab(made);
+              }}
+            />
 
             <div className="grid grid-cols-2 gap-2">
               <AlertCard
@@ -943,6 +954,83 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+/** Today's date in Saudi Arabia, as yyyy-mm-dd: the day changes at midnight there. */
+const saudiToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh" }).format(new Date());
+
+/**
+ * When today has no day tab yet, a button that makes it from the newest tab, as ➕ Next Day
+ * does in the sheet.
+ */
+function NewDayCard({
+  latestTab,
+  dirty,
+  onCreated,
+}: {
+  latestTab: string;
+  dirty: boolean;
+  onCreated: (tab: string, message: string) => void;
+}) {
+  const today = saudiToday();
+  const latest = tabToIso(latestTab);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [passcode, setPasscode] = useState("");
+  const [askPasscode, setAskPasscode] = useState(() => !getPasscode());
+  if (!latest || latest >= today) return null;
+  const name = isoToTab(today);
+
+  const make = async () => {
+    if (askPasscode) {
+      if (!passcode.trim()) return setError("Enter the team passcode.");
+      savePasscode(passcode.trim());
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await createDay(today);
+      onCreated(
+        r.tab,
+        `Made the ${r.tab} tab from ${r.from} · ${r.ordersKept} pending ${r.ordersKept === 1 ? "order" : "orders"} carried` +
+          (r.ordersDropped ? `, ${r.ordersDropped} met dropped` : ""),
+      );
+    } catch (err) {
+      if (err instanceof PasscodeError) setAskPasscode(true);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card-surface mb-3 border-l-4 border-l-primary p-3">
+      <p className="text-sm font-semibold">Today ({shortDate(today)}) has no tab yet</p>
+      <p className="mt-0.5 text-[0.72rem] text-muted-foreground">
+        The newest is {latestTab}. Making {name} copies it: Opening from its Closing, Production, Despatch, absentees and
+        roll counts empty, pending orders kept, no Machine Work Log.
+      </p>
+      {askPasscode ? (
+        <input
+          type="password"
+          value={passcode}
+          onChange={(e) => setPasscode(e.target.value)}
+          placeholder="Team passcode"
+          className={`${inputClass} mt-2`}
+        />
+      ) : null}
+      {error ? <p className="mt-2 text-[0.72rem] text-destructive">{error}</p> : null}
+      <button
+        onClick={() => void make()}
+        disabled={busy || dirty}
+        title={dirty ? "Save or discard this day's changes first" : undefined}
+        className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+      >
+        <Plus className="size-4" />
+        {busy ? "Making the tab…" : dirty ? "Save this day's changes first" : `Create the ${name} tab`}
+      </button>
     </div>
   );
 }

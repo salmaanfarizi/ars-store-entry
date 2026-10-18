@@ -97,7 +97,9 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
-      return body.action === 'transfer' ? writeTransfer_(body) : writeDaily_(body);
+      if (body.action === 'transfer') return writeTransfer_(body);
+      if (body.action === 'nextDay') return newDay_(body);
+      return writeDaily_(body);
     } finally {
       lock.releaseLock();
     }
@@ -997,6 +999,106 @@ function writeTransfer_(body) {
       return { item: p.item, added: p.plus, despatch: p.start + p.plus };
     }),
   };
+}
+
+/* -------------------------------- new day -------------------------------- */
+
+/** Order statuses that mean done: such orders are not carried to the new day. */
+const CLOSED_STATUS = /^met$|deliver|cancel|done|complet|closed/i;
+
+/** The packing-roll and cover columns that hold the day's counts, cleared on a new day. */
+const PACKING_DAILY_HEADERS = ['roll', 'today wastage', 'cover', ''];
+
+/**
+ * Makes the day tab for body.date (yyyy-mm-dd) from the newest tab before it, as ➕ Next Day
+ * does: a copy placed after it, with that date, Opening pointing at its Closing, Production,
+ * Despatch, absentees and the packing-roll counts cleared, and only pending orders kept.
+ * The Machine Work Log is left out (not wanted from 19 Oct 2026 on).
+ */
+function newDay_(body) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const iso = String(body.date || '').trim();
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('Pick the date of the new day.');
+  const name = Number(m[2]) + '/' + Number(m[3]) + '/' + m[1];
+  const t = tabTime_(name);
+  const tabs = datedTabs_(ss);
+  if (tabs.some(function (x) { return x.name === name; })) throw new Error('The ' + name + ' tab already exists.');
+  const later = tabs.filter(function (x) { return x.t > t; });
+  if (later.length) throw new Error('There is already a later tab (' + later[0].name + '). Days are made in order.');
+  if (t > todayTime_() + 36 * 60 * 60 * 1000) throw new Error('A day tab can be made at most one day ahead.');
+  const before = tabs.filter(function (x) { return x.t < t; });
+  if (!before.length) throw new Error('There is no earlier day tab to start from.');
+  const prev = before[before.length - 1];
+  const prevLayout = readLayout_(prev.sheet); // checks the source reads before copying it
+
+  const sheet = prev.sheet.copyTo(ss).setName(name);
+  ss.setActiveSheet(sheet);
+  ss.moveActiveSheet(prev.sheet.getIndex() + 1);
+
+  // The date cell: next to the "Date" label in the top rows.
+  const top = sheet.getRange(1, 1, Math.min(6, sheet.getLastRow()), Math.min(sheet.getLastColumn(), 13)).getDisplayValues();
+  top.some(function (r, i) {
+    const c = r.findIndex(function (v) { return norm_(v) === 'date'; });
+    if (c < 0) return false;
+    sheet.getRange(i + 1, c + 2).setValue(isoToSheetDate_(ss, iso));
+    return true;
+  });
+  const abs = absenteesCell_(sheet);
+  if (abs) abs.clearContent();
+
+  const layout = readLayout_(sheet);
+  const cols = layout.cols;
+  const prevRef = "'" + prev.name.replace(/'/g, "''") + "'";
+  const clearValue = function (row, col) {
+    if (col < 0) return;
+    const r = sheet.getRange(row, col + 1);
+    if (!r.getFormula()) r.clearContent();
+  };
+  let kept = 0;
+  let dropped = 0;
+  layout.items.forEach(function (x) {
+    if (cols.opening >= 0 && cols.closing >= 0) {
+      sheet.getRange(x.row, cols.opening + 1).setFormula('=IFERROR(' + prevRef + '!$' + colLetter_(cols.closing) + x.row + ',0)');
+    }
+    clearValue(x.row, cols.production);
+    clearValue(x.row, cols.despatch);
+    const hasOrder = x.orderText || x.deliverBy || x.status;
+    if (!hasOrder) return;
+    if (CLOSED_STATUS.test(String(x.status).trim())) {
+      clearValue(x.row, cols.order);
+      clearValue(x.row, cols.deliverBy);
+      clearValue(x.row, cols.status);
+      dropped++;
+    } else {
+      kept++;
+    }
+  });
+
+  // Packing rolls / covers: the second "No" header below the items; clear its day's counts.
+  const lastItemRow = layout.items.length ? layout.items[layout.items.length - 1].row : 1;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > lastItemRow) {
+    const width = Math.min(sheet.getLastColumn(), 8);
+    const below = sheet.getRange(lastItemRow + 1, 1, lastRow - lastItemRow, width).getDisplayValues();
+    const h = below.findIndex(function (r) { return norm_(r[0]) === 'no'; });
+    if (h >= 0) {
+      const header = below[h].map(norm_);
+      for (let i = h + 1; i < below.length && isNumber_(below[i][0]); i++) {
+        header.forEach(function (name, c) {
+          if (c >= 2 && PACKING_DAILY_HEADERS.indexOf(name) >= 0) clearValue(lastItemRow + 1 + i, c);
+        });
+      }
+    }
+  }
+
+  // No Machine Work Log on the new day: its title row and everything under it go.
+  const colA = sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues();
+  const logIdx = colA.findIndex(function (r) { return norm_(r[0]).indexOf('machine work log') >= 0; });
+  if (logIdx > lastItemRow) sheet.deleteRows(logIdx + 1, sheet.getMaxRows() - logIdx);
+
+  SpreadsheetApp.flush();
+  return { ok: true, tab: name, from: prev.name, items: prevLayout.items.length, ordersKept: kept, ordersDropped: dropped };
 }
 
 /* ----------------------------- month report ----------------------------- */

@@ -144,12 +144,32 @@ export default async (req: Request) => {
     );
   }
 
-  let parsed: DailyWrite | string;
+  let raw: unknown;
   try {
-    parsed = parseWrite(await req.json());
+    raw = await req.json();
   } catch {
-    parsed = "Expected a JSON body.";
+    raw = null;
   }
+
+  // Make the next day tab (what ➕ Next Day does in the sheet).
+  if (raw && typeof raw === "object" && (raw as { action?: unknown }).action === "nextDay") {
+    const date = (raw as { date?: unknown }).date;
+    if (!isIsoDate(date)) return json({ message: "Pick the date of the new day." }, 400);
+    try {
+      const reply = await callScript({ method: "POST", body: { action: "nextDay", date } });
+      return json({
+        ok: true,
+        tab: reply.tab,
+        from: reply.from,
+        ordersKept: reply.ordersKept ?? 0,
+        ordersDropped: reply.ordersDropped ?? 0,
+      });
+    } catch (err) {
+      return json({ message: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  }
+
+  const parsed: DailyWrite | string = raw === null ? "Expected a JSON body." : parseWrite(raw);
   if (typeof parsed === "string") return json({ message: parsed }, 400);
 
   try {
