@@ -21,7 +21,7 @@
  */
 
 const SHEET_ID = '1l1YuOxJ5W-lWxD-xgC2ZlfatNxDN4HuVAbaf4SL4vxU';
-const SECRET = 'PASTE_SECRET_HERE';
+const SECRET = '2031106194';
 
 /** Day tabs are named by date (10/15/2026); "today" is decided in Saudi time. */
 const TIME_ZONE = 'Asia/Riyadh';
