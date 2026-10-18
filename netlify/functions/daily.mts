@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 import type { DailyData, DailyWrite, NewItem, OrderEdit } from "../../src/types";
-import { authorize, callScript, json, scriptConfigured, text } from "../lib/script";
+import { authorize, callScript, env, json, scriptConfigured, text } from "../lib/script";
 
 /**
  * Reads a day tab live and writes Production, Despatch, Absentees and orders into it.
@@ -155,8 +155,15 @@ export default async (req: Request) => {
   if (raw && typeof raw === "object" && (raw as { action?: unknown }).action === "nextDay") {
     const date = (raw as { date?: unknown }).date;
     if (!isIsoDate(date)) return json({ message: "Pick the date of the new day." }, 400);
+    if (!env("NEXTDAY_SCRIPT_URL")) {
+      return json(
+        { message: "Creating a day from the app isn't set up yet (NEXTDAY_SCRIPT_URL). Use ➕ Next Day in the sheet." },
+        503,
+      );
+    }
     try {
-      const reply = await callScript({ method: "POST", body: { action: "nextDay", date } });
+      // The sheet's own Next Day makes the tab, so the app and the menu build identical days.
+      const reply = await callScript({ method: "POST", body: { action: "nextDay", date } }, "NEXTDAY_SCRIPT_URL");
       return json({
         ok: true,
         tab: reply.tab,

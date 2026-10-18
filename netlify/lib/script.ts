@@ -5,6 +5,9 @@
  *   ENTRY_SCRIPT_URL     the Apps Script web app URL (…/exec)
  *   ENTRY_SCRIPT_SECRET  the same value as the SECRET Script Property of entry.gs
  *   APP_PASSCODE         the team passcode
+ *   NEXTDAY_SCRIPT_URL   optional: the sheet's own script (apps-script/next-day-api.gs added to
+ *                        it) deployed as a web app, for the "Create today's tab" button. It
+ *                        uses the same secret.
  */
 
 /** Apps Script cold starts can take several seconds; give it room but not forever. */
@@ -29,8 +32,9 @@ export type ScriptReply = {
 
 export async function callScript(
   init: { method: "GET"; params?: Record<string, string> } | { method: "POST"; body: unknown },
+  urlKey = "ENTRY_SCRIPT_URL",
 ) {
-  const url = new URL(env("ENTRY_SCRIPT_URL"));
+  const url = new URL(env(urlKey));
   const secret = env("ENTRY_SCRIPT_SECRET");
   if (init.method === "GET") {
     url.searchParams.set("secret", secret);

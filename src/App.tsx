@@ -961,10 +961,7 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
 /** Today's date in Saudi Arabia, as yyyy-mm-dd: the day changes at midnight there. */
 const saudiToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Riyadh" }).format(new Date());
 
-/**
- * When today has no day tab yet, a button that makes it from the newest tab, as ➕ Next Day
- * does in the sheet.
- */
+/** When today has no day tab yet, a button that runs the sheet's own ➕ Next Day for it. */
 function NewDayCard({
   latestTab,
   dirty,
@@ -995,7 +992,7 @@ function NewDayCard({
       onCreated(
         r.tab,
         `Made the ${r.tab} tab from ${r.from} · ${r.ordersKept} pending ${r.ordersKept === 1 ? "order" : "orders"} carried` +
-          (r.ordersDropped ? `, ${r.ordersDropped} met dropped` : ""),
+          (r.ordersDropped ? `, ${r.ordersDropped} closed` : ""),
       );
     } catch (err) {
       if (err instanceof PasscodeError) setAskPasscode(true);
@@ -1009,8 +1006,8 @@ function NewDayCard({
     <div className="card-surface mb-3 border-l-4 border-l-primary p-3">
       <p className="text-sm font-semibold">Today ({shortDate(today)}) has no tab yet</p>
       <p className="mt-0.5 text-[0.72rem] text-muted-foreground">
-        The newest is {latestTab}. Making {name} copies it: Opening from its Closing, Production, Despatch, absentees and
-        roll counts empty, pending orders kept, no Machine Work Log.
+        The newest is {latestTab}. This runs the sheet's ➕ Next Day for {name}: Opening from {latestTab}'s Closing,
+        Suggested Mini from despatch history, open orders carried. {latestTab} needs its absentees first.
       </p>
       {askPasscode ? (
         <input

@@ -26,11 +26,10 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
   or already late, is counted at the top and marked on its item, with how many it is short of
   closing stock. Late orders are red, the rest amber.
 - **Create today's tab.** When today (Saudi time) has no day tab, Daily entry shows a *Create
-  the M/D/YYYY tab* button. It copies the newest tab and places the copy after it with today's
-  date, points Opening at that tab's Closing, empties Production, Despatch, absentees and the
-  packing-roll / cover counts, keeps pending orders (MET / delivered ones are dropped) and leaves
-  out the Machine Work Log. It doesn't do anything else the sheet's own ➕ Next Day script may do
-  (history or dashboard tabs).
+  the M/D/YYYY tab* button. It runs the sheet's own ➕ Next Day (through
+  `apps-script/next-day-api.gs`, added to the sheet's script project and deployed as a web app
+  at `NEXTDAY_SCRIPT_URL`), so the app and the menu build identical days. The last day needs its
+  absentees first; carried orders without a date carry undated.
 - **Monthly report** (Daily entry → *Month report*): pick a month for one PDF of every day tab in
   it — each item's opening (first day), production and despatch (summed) and closing (last
   day), the daily totals with absentees — and all its transfers by kind, by item and one by one.
@@ -103,6 +102,7 @@ Retire the old transfer app once this is live, so two apps don't number transfer
    | `ENTRY_SCRIPT_URL` | the web app URL (…/exec) |
    | `ENTRY_SCRIPT_SECRET` | the same value as the script's `SECRET` property |
    | `APP_PASSCODE` | the team passcode people type once per phone |
+   | `NEXTDAY_SCRIPT_URL` | optional: the sheet's own script deployed as a web app, with `next-day-api.gs` added (see that file) — turns on *Create today's tab* |
 
    Then redeploy. Until the first two are set the app says it isn't connected.
 
