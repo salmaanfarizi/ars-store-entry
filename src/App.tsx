@@ -23,7 +23,7 @@ import {
   savePasscode,
   shortDate,
 } from "./api";
-import { DUE_SOON_DAYS, orderDue, shortfall, stockSignal, type Due } from "./insights";
+import { DUE_SOON_DAYS, orderDue, pendingOrder, shortfall, stockSignal, type Due } from "./insights";
 import { Transfers } from "./Transfers";
 import type { DailyData, DailyRow, DailyWrite, NewItem, OrderEdit } from "./types";
 
@@ -51,7 +51,8 @@ function orderChange(row: DailyRow, draft: OrderDraft | undefined): OrderEdit | 
   if (draft === "clear") return row.order ? { action: "clear" } : undefined;
   const existing = row.order;
   const blank = !draft.qty.trim() && !draft.deliverBy;
-  if (!existing && blank) return undefined;
+  // A met order is done with: an untouched blank form over it is no change.
+  if ((!existing || !pendingOrder(row)) && blank) return undefined;
   const qty = Number(draft.qty.trim());
   if (
     existing &&
@@ -89,11 +90,15 @@ function entryFor(row: DailyRow, draft: Draft | undefined): { entry: Entry | nul
   return { entry: changed ? entry : null, problem };
 }
 
-const emptyOrder = (row: DailyRow | undefined, statuses: string[]): OrderForm => ({
-  qty: row?.order?.qty != null ? String(row.order.qty) : "",
-  deliverBy: row?.order?.deliverBy ?? "",
-  status: row?.order?.status || statuses[0] || "",
-});
+const emptyOrder = (row: DailyRow | undefined, statuses: string[]): OrderForm => {
+  // A met order isn't shown, so a new order starts blank rather than from it.
+  const open = row ? pendingOrder(row) : null;
+  return {
+    qty: open?.qty != null ? String(open.qty) : "",
+    deliverBy: open?.deliverBy ?? "",
+    status: open?.status || statuses[0] || "",
+  };
+};
 
 export function App() {
   const [tab, setTab] = useState("");
@@ -252,7 +257,7 @@ export function App() {
   const visible = rows.filter((r) => {
     const key = rowKey(r);
     if (filter === "edited" && !changes.editedKeys.has(key)) return false;
-    if (filter === "orders" && !r.order && !drafts[key]?.order) return false;
+    if (filter === "orders" && !pendingOrder(r) && !drafts[key]?.order) return false;
     if (filter === "due" && !signals.due.has(key)) return false;
     if (filter === "low" && !signals.low.has(key)) return false;
     return (
@@ -264,7 +269,7 @@ export function App() {
   });
   const sections = [...new Set(rows.map((r) => r.section))];
   const visibleSections = sections.filter((s) => visible.some((r) => r.section === s));
-  const withOrders = rows.filter((r) => r.order).length;
+  const withOrders = rows.filter((r) => pendingOrder(r)).length;
 
   const saveLabel = [
     changes.entries.length ? `${changes.entries.length} ${changes.entries.length === 1 ? "item" : "items"}` : "",
@@ -715,19 +720,20 @@ function ItemCard({
   const signal = stockSignal(row);
   const short = shortfall(row);
 
+  const pending = pendingOrder(row);
   const order = draft?.order;
   const clearing = order === "clear";
   const form = order && order !== "clear" ? order : null;
   const orderEdited = orderChange(row, order) !== undefined;
   // Keep a status the sheet already holds selectable, even if the dropdown has changed.
-  const choices = row.order?.status && !statuses.includes(row.order.status) ? [row.order.status, ...statuses] : statuses;
+  const choices = pending?.status && !statuses.includes(pending.status) ? [pending.status, ...statuses] : statuses;
 
   const chip = clearing
     ? "Removing order"
     : form && orderEdited
       ? `Order ${form.qty || "?"} · unsaved`
-      : row.order
-        ? `Order ${row.order.text || "—"}${row.order.status ? ` · ${row.order.status}` : ""}`
+      : pending
+        ? `Order ${pending.text || "—"}${pending.status ? ` · ${pending.status}` : ""}`
         : "Order";
 
   return (
@@ -751,7 +757,7 @@ function ItemCard({
         <button
           onClick={() => onToggleOrder(!orderOpen)}
           className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[0.66rem] font-medium ${
-            row.order || orderEdited ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground"
+            pending || orderEdited ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground"
           }`}
         >
           <ClipboardList className="size-3.5" />
@@ -812,9 +818,9 @@ function ItemCard({
               <OrderFields form={form} choices={choices} onChange={(next) => onChange({ order: next })} />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <p className="text-[0.66rem] text-muted-foreground">
-                  {row.order?.deliverBy ? `Now: deliver by ${shortDate(row.order.deliverBy)}` : "Also copied to later day tabs that exist."}
+                  {pending?.deliverBy ? `Now: deliver by ${shortDate(pending.deliverBy)}` : "Also copied to later day tabs that exist."}
                 </p>
-                {row.order ? (
+                {pending ? (
                   <button
                     onClick={() => onChange({ order: "clear" })}
                     className="shrink-0 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive"
@@ -981,7 +987,7 @@ function NewOrderSheet({
                 .filter((r) => r.section === s)
                 .map((r) => (
                   <option key={rowKey(r)} value={rowKey(r)}>
-                    {r.item} (#{r.code}){r.order ? " · has an order" : ""}
+                    {r.item} (#{r.code}){pendingOrder(r) ? " · has an order" : ""}
                   </option>
                 ))}
             </optgroup>
@@ -991,7 +997,7 @@ function NewOrderSheet({
       {row ? (
         <p className="mt-1 text-[0.68rem] text-muted-foreground">
           Closing stock <span className="num">{fmt(row.closing)}</span>
-          {row.order ? ` · replaces the current order of ${row.order.text}` : ""}
+          {pendingOrder(row) ? ` · replaces the current order of ${pendingOrder(row)?.text}` : ""}
         </p>
       ) : null}
       <div className="mt-3">

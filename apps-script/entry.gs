@@ -35,6 +35,8 @@ const TRANSFER_HEADER = [
   // Added after the old app: route (salesman), direct (sale to a customer) or warehouse
   // (regional warehouse transfer). Rows from before it are routes.
   'transfer_type',
+  // The customer's invoice number, for direct sales.
+  'invoice_no',
 ];
 
 const TRANSFER_KINDS = ['route', 'direct', 'warehouse'];
@@ -43,6 +45,8 @@ const TRANSFER_UNITS = ['Bag', 'Bundle', 'Box', 'Carton'];
 
 /** How many past transfers the app lists. */
 const RECENT_TRANSFERS = 40;
+/** Older transfers still sent along, for the day PDF of any of the last this-many days. */
+const TRANSFER_PDF_DAYS = 31;
 
 /** Day tabs are named by date (10/15/2026); "today" is decided in Saudi time. */
 const TIME_ZONE = 'Asia/Riyadh';
@@ -766,6 +770,7 @@ function readTransfers_() {
         route: String(r[3] || ''),
         requisitionRef: String(r[4] || ''),
         notes: String(r[13] || ''),
+        invoiceNo: String(r[16] || ''),
         createdAt: String(r[14] || ''),
         lines: [],
       };
@@ -808,6 +813,7 @@ function readTransfers_() {
     });
   });
 
+  const since = Utilities.formatDate(new Date(Date.now() - TRANSFER_PDF_DAYS * 864e5), TIME_ZONE, 'yyyy-MM-dd');
   const newestFirst = function (a, b) {
     return a < b ? 1 : a > b ? -1 : 0;
   };
@@ -821,7 +827,9 @@ function readTransfers_() {
     }),
     transfers: order
       .sort(newestFirst)
-      .slice(0, RECENT_TRANSFERS)
+      .filter(function (d, i) {
+        return i < RECENT_TRANSFERS || transfers[d].date >= since;
+      })
       .map(function (d) {
         return transfers[d];
       }),
@@ -864,6 +872,7 @@ function writeTransfer_(body) {
   const ref = String(body.requisitionRef || '').trim();
   const notes = String(body.notes || '').trim().slice(0, 300);
   const kind = TRANSFER_KINDS.indexOf(body.kind) >= 0 ? body.kind : 'route';
+  const invoiceNo = kind === 'direct' ? String(body.invoiceNo || '').trim().slice(0, 60) : '';
 
   const trfSheet = reqSheet_('Transfers');
   const existing = rowsOf_(trfSheet);
@@ -934,21 +943,25 @@ function writeTransfer_(body) {
       docNo, date, salesman, route, ref,
       l.code, l.name, l.unit,
       l.stockTransfer, l.physicalStock, l.systemStock, l.piecesReimbursed, l.physicalStock - l.systemStock,
-      notes, createdAt, kind,
+      notes, createdAt, kind, invoiceNo,
     ];
   });
 
-  // A new tab gets the whole header; an old one gains the transfer_type column once.
+  // A new tab gets the whole header; an old one gains the newer columns once.
   if (!existing.length) {
     trfSheet.getRange(1, 1, 1, TRANSFER_HEADER.length).setValues([TRANSFER_HEADER]);
-  } else if (String(existing[0][15] || '').trim() !== 'transfer_type') {
-    trfSheet.getRange(1, 16).setValue('transfer_type');
+  } else {
+    [16, 17].forEach(function (c) {
+      if (String(existing[0][c - 1] || '').trim() !== TRANSFER_HEADER[c - 1]) {
+        trfSheet.getRange(1, c).setValue(TRANSFER_HEADER[c - 1]);
+      }
+    });
   }
   const start = trfSheet.getLastRow() + 1;
   const block = trfSheet.getRange(start, 1, rows.length, TRANSFER_HEADER.length);
   // Text columns stay text (no date or number guessing), as the old app's RAW writes left them.
   trfSheet.getRange(start, 1, rows.length, 8).setNumberFormat('@');
-  trfSheet.getRange(start, 14, rows.length, 3).setNumberFormat('@');
+  trfSheet.getRange(start, 14, rows.length, 4).setNumberFormat('@');
   block.setValues(rows);
 
   plan.forEach(function (p) {

@@ -52,6 +52,8 @@ type Draft = {
   salesman: string;
   /** kind "direct": who bought it. */
   customer: string;
+  /** kind "direct": the customer's invoice number, if there is one. */
+  invoiceNo: string;
   /** kind "warehouse": where it went. */
   warehouse: Warehouse;
   notes: string;
@@ -168,6 +170,7 @@ export function Transfers({
       route: req?.route ?? "",
       salesman: req?.salesman ?? "",
       customer: "",
+      invoiceNo: "",
       warehouse: "Riyadh",
       notes: "",
       lines: req ? req.lines.map((l) => lineFor(l.code, l.name, l.unit, regionOf(req.route), l.quantity)) : [],
@@ -273,6 +276,8 @@ export function Transfers({
         New transfer · direct sale · warehouse
       </button>
 
+      <DayPdf transfers={data.transfers} initial={tabToIso(dayTab) || todayIso()} />
+
       <h2 className="mb-2 mt-6 text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         Recent transfers
       </h2>
@@ -280,7 +285,7 @@ export function Transfers({
         {data.transfers.length === 0 ? (
           <p className="p-4 text-center text-sm text-muted-foreground">No transfers yet.</p>
         ) : (
-          data.transfers.map((t) => <TransferRow key={t.docNo} transfer={t} />)
+          data.transfers.slice(0, RECENT_LISTED).map((t) => <TransferRow key={t.docNo} transfer={t} />)
         )}
       </div>
     </>
@@ -313,7 +318,8 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
           </p>
           <p className="truncate text-[0.72rem] text-muted-foreground">
             {t.kind === "route" ? `${t.salesman || "—"} · ${t.route || "—"}` : t.salesman || t.route || "—"}
-            {t.requisitionRef ? ` · from ${t.requisitionRef}` : ""} · {fmt(total)} total
+            {t.requisitionRef ? ` · from ${t.requisitionRef}` : ""}
+            {t.invoiceNo ? ` · Inv ${t.invoiceNo}` : ""} · {fmt(total)} total
           </p>
         </div>
         {open ? <ChevronUp className="size-4 shrink-0" /> : <ChevronDown className="size-4 shrink-0" />}
@@ -343,6 +349,56 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
           <PdfButton transfer={t} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The script sends a month of transfers for the day PDF; the list shows the newest of them. */
+const RECENT_LISTED = 40;
+
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** Pick a day and download every transfer made on it as one PDF. */
+function DayPdf({ transfers, initial }: { transfers: Transfer[]; initial: string }) {
+  const [date, setDate] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setDate(initial), [initial]);
+  const count = transfers.filter((t) => t.date === date).length;
+  return (
+    <div className="card-surface mt-6 p-3">
+      <p className="inline-flex items-center gap-1.5 text-sm font-semibold">
+        <FileDown className="size-4" />
+        Day's transfers PDF
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={`${inputClass} flex-1`} />
+        <button
+          disabled={busy || !date || count === 0}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              const { exportTransfersDayPdf } = await import("./pdf");
+              await exportTransfersDayPdf(date, transfers);
+            } catch (err) {
+              setError(`Couldn't make the PDF: ${err instanceof Error ? err.message : String(err)}`);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? "Making…" : "PDF"}
+        </button>
+      </div>
+      <p className="mt-1 text-[0.7rem] text-muted-foreground">
+        {date ? `${count} ${count === 1 ? "transfer" : "transfers"} on ${shortDate(date)}.` : "Pick a day."} Covers the last 31 days.
+      </p>
+      {error ? <p className="mt-1 text-[0.72rem] text-destructive">{error}</p> : null}
     </div>
   );
 }
@@ -458,6 +514,7 @@ function TransferForm({
         route: to.route,
         salesman: to.salesman,
         requisitionRef: draft.requisitionRef,
+        invoiceNo: draft.kind === "direct" ? draft.invoiceNo.trim() : "",
         notes: draft.notes,
         lines,
       });
@@ -468,6 +525,7 @@ function TransferForm({
         salesman: to.salesman,
         route: to.route,
         requisitionRef: draft.requisitionRef,
+        invoiceNo: draft.kind === "direct" ? draft.invoiceNo.trim() : "",
         notes: draft.notes,
         createdAt: "",
         lines: lines.map(({ target: _t, ...l }) => ({ ...l, variance: l.physicalStock - l.systemStock })),
@@ -567,6 +625,17 @@ function TransferForm({
         </label>
         )}
       </div>
+      {draft.kind === "direct" ? (
+        <label className="mt-2 block">
+          <span className={labelClass}>Invoice no.</span>
+          <input
+            value={draft.invoiceNo}
+            onChange={(e) => set({ invoiceNo: e.target.value })}
+            placeholder="Optional"
+            className={`${inputClass} mt-1`}
+          />
+        </label>
+      ) : null}
       <p className="mt-1 text-[0.68rem] text-muted-foreground">
         {draft.kind === "route" ? (
           <>
@@ -778,6 +847,7 @@ function SavedCard({ result, transfer, onAnother }: { result: TransferResult; tr
       <p className="mt-1 text-[0.75rem] text-muted-foreground">
         {transfer.kind === "route" ? `${transfer.salesman} · ${transfer.route}` : transfer.salesman || transfer.route}
         {transfer.requisitionRef ? ` · from ${transfer.requisitionRef}` : ""}
+        {transfer.invoiceNo ? ` · Inv ${transfer.invoiceNo}` : ""}
       </p>
       {result.despatched.length ? (
         <div className="mt-3 rounded-xl bg-surface p-3">

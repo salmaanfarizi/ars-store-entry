@@ -1,5 +1,5 @@
 import { fmt, shortDate } from "./api";
-import { orderDue, shortfall, stockSignal } from "./insights";
+import { orderDue, pendingOrder, shortfall, stockSignal } from "./insights";
 import type { DailyData, Transfer } from "./types";
 
 const NAVY: [number, number, number] = [32, 35, 87];
@@ -150,6 +150,8 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
     for (const r of data.rows.filter((x) => x.section === section)) {
       const d = orderDue(r.order);
       const s = stockSignal(r);
+      // Met orders are done with; only pending ones are printed.
+      const order = pendingOrder(r);
       body.push([
         r.code,
         r.item,
@@ -158,9 +160,9 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
         r.despatch == null ? "" : fmt(r.despatch),
         fmt(r.closing),
         fmt(r.mini),
-        r.order?.text || "",
-        r.order?.deliverBy ? shortDate(r.order.deliverBy) : "",
-        r.order?.status || "",
+        order?.text || "",
+        order?.deliverBy ? shortDate(order.deliverBy) : "",
+        order?.status || "",
       ]);
       flags.push(d?.kind === "late" ? "late" : d ? "soon" : s.alert ? "low" : null);
     }
@@ -224,7 +226,7 @@ export async function exportTransferPdf(t: Transfer): Promise<void> {
         : `${t.salesman || "-"}  |  ${t.route || "-"}`;
   drawHeader(doc, await logoDataUrl(), `${title} ${t.docNo}`, [
     `ARS International Co SPC  |  ${shortDate(t.date)} ${t.date.slice(0, 4)}`,
-    `${to}${t.requisitionRef ? `  |  Requisition ${t.requisitionRef}` : ""}`,
+    `${to}${t.invoiceNo ? `  |  Invoice ${t.invoiceNo}` : ""}${t.requisitionRef ? `  |  Requisition ${t.requisitionRef}` : ""}`,
   ]);
 
   const sum = (k: "stockTransfer" | "physicalStock" | "systemStock" | "piecesReimbursed" | "variance") =>
@@ -279,4 +281,116 @@ export async function exportTransferPdf(t: Transfer): Promise<void> {
   doc.text(`${receiver}${t.salesman && t.kind !== "warehouse" ? ` (${t.salesman})` : ""}`, pageWidth - margin - w, y + 5);
 
   doc.save(`${t.docNo || "transfer"}.pdf`);
+}
+
+/** Every transfer of one day, as an A4 PDF: each transfer, then the quantity per item by kind. */
+export async function exportTransfersDayPdf(date: string, transfers: Transfer[]): Promise<void> {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 10;
+  const day = transfers.filter((t) => t.date === date);
+  const qty = (t: Transfer) => t.lines.reduce((n, l) => n + l.stockTransfer, 0);
+  const kindName = { route: "Route", direct: "Direct sale", warehouse: "Warehouse" } as const;
+  const count = (k: Transfer["kind"]) => day.filter((t) => t.kind === k).length;
+
+  drawHeader(doc, await logoDataUrl(), "Transfers of the Day", [
+    `ARS International Co SPC  |  ${shortDate(date)} ${date.slice(0, 4)}`,
+    `${day.length} ${day.length === 1 ? "transfer" : "transfers"}: ${count("route")} route, ${count("direct")} direct, ${count("warehouse")} warehouse  |  Generated ${generatedAt()}`,
+  ]);
+
+  let y = 37;
+  const heading = (title: string) => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...NAVY);
+    doc.text(title, margin, y);
+    doc.setTextColor(30, 30, 30);
+    y += 2;
+  };
+  const after = () => {
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  };
+
+  heading(`Transfers (${day.length})`);
+  if (!day.length) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("No transfers on this day.", margin, y + 4);
+  } else {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["Doc no", "Type", "To", "Invoice / requisition", "Items", "Quantity"]],
+      body: day.map((t) => [
+        t.docNo,
+        kindName[t.kind],
+        t.kind === "route" ? `${t.salesman || "-"} (${t.route || "-"})` : t.salesman || t.route || "-",
+        [t.invoiceNo && `Inv ${t.invoiceNo}`, t.requisitionRef].filter(Boolean).join("  ") || "-",
+        String(t.lines.length),
+        fmt(qty(t)),
+      ]),
+      foot: [["", "", "", "Total", "", { content: fmt(day.reduce((n, t) => n + qty(t), 0)), styles: { halign: "right" as const } }]],
+      styles: { fontSize: 8.5, cellPadding: 1.6 },
+      headStyles: { fillColor: NAVY },
+      footStyles: { fillColor: [232, 233, 243], textColor: [30, 30, 30], fontStyle: "bold" },
+      columnStyles: { 4: { halign: "right" }, 5: { halign: "right" } },
+    });
+    after();
+
+    // The same item can go out on several transfers; one row per item, split by kind.
+    type Sum = { code: string; name: string; unit: string; route: number; direct: number; warehouse: number };
+    const sums = new Map<string, Sum>();
+    for (const t of day) {
+      for (const l of t.lines) {
+        const key = `${l.code}|${l.name}|${l.unit}`;
+        const s = sums.get(key) ?? { code: l.code, name: l.name, unit: l.unit, route: 0, direct: 0, warehouse: 0 };
+        s[t.kind] += l.stockTransfer;
+        sums.set(key, s);
+      }
+    }
+    const items = [...sums.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const total = (k: "route" | "direct" | "warehouse") => items.reduce((n, s) => n + s[k], 0);
+    heading(`By item (${items.length})`);
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Total"]],
+      body: items.map((s) => [
+        s.code,
+        s.name,
+        s.unit,
+        s.route ? fmt(s.route) : "",
+        s.direct ? fmt(s.direct) : "",
+        s.warehouse ? fmt(s.warehouse) : "",
+        fmt(s.route + s.direct + s.warehouse),
+      ]),
+      foot: [
+        [
+          "",
+          "Total",
+          "",
+          ...[total("route"), total("direct"), total("warehouse"), total("route") + total("direct") + total("warehouse")].map((n) => ({
+            content: fmt(n),
+            styles: { halign: "right" as const },
+          })),
+        ],
+      ],
+      styles: { fontSize: 8.5, cellPadding: 1.6 },
+      headStyles: { fillColor: NAVY },
+      footStyles: { fillColor: [232, 233, 243], textColor: [30, 30, 30], fontStyle: "bold" },
+      columnStyles: { 1: { cellWidth: 78 }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right", fontStyle: "bold" } },
+    });
+  }
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Page ${i} of ${pages}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 6, { align: "center" });
+  }
+
+  doc.save(`transfers-${date}.pdf`);
 }

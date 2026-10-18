@@ -115,6 +115,8 @@ export type Transfer = {
   salesman: string;
   route: string;
   requisitionRef: string;
+  /** Direct sales only; empty otherwise. */
+  invoiceNo: string;
   notes: string;
   createdAt: string;
   lines: TransferLine[];
@@ -140,6 +142,7 @@ export type TransferWrite = {
   route: string;
   salesman: string;
   requisitionRef: string;
+  invoiceNo: string;
   notes: string;
   lines: (Omit<TransferLine, "variance"> & { target: StoreTarget | null })[];
 };

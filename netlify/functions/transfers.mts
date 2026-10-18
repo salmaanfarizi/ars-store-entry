@@ -27,6 +27,7 @@ function parseWrite(body: unknown): TransferWrite | string {
     route: text(b.route, 80),
     salesman: text(b.salesman, 80),
     requisitionRef: text(b.requisitionRef, 40),
+    invoiceNo: kind === "direct" ? text(b.invoiceNo, 60) : "",
     notes: text(b.notes, 300),
     lines: [],
   };
