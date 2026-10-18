@@ -1,4 +1,4 @@
-import type { DailyData, DailyWrite } from "./types";
+import type { DailyData, DailyWrite, MonthData } from "./types";
 
 /** Section + code + item: the same code appears once per destination section. */
 export const rowKey = (r: { section: string; code: string; item: string }) =>
@@ -47,6 +47,17 @@ export async function loadDaily(tab: string): Promise<DailyData> {
   });
   if (!res.ok) throw new Error(`Couldn't read the sheet (HTTP ${res.status})`);
   return (await res.json()) as DailyData;
+}
+
+/** A month (yyyy-mm) added up from its day tabs, with its transfers. */
+export async function loadMonth(month: string): Promise<MonthData> {
+  const res = await fetch(`/api/month?month=${encodeURIComponent(month)}`, {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  });
+  const body = (await res.json().catch(() => ({}))) as MonthData & { message?: string };
+  if (!res.ok) throw new Error(body.message || `Couldn't read the month (HTTP ${res.status})`);
+  return body;
 }
 
 export async function saveDaily(write: DailyWrite): Promise<{ cells: number }> {

@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CalendarClock,
   Check,
+  CalendarRange,
   ClipboardList,
   FileDown,
   PackagePlus,
@@ -16,6 +17,7 @@ import {
   fmt,
   getPasscode,
   loadDaily,
+  loadMonth,
   parseQty,
   PasscodeError,
   rowKey,
@@ -116,7 +118,7 @@ export function App() {
   const [saved, setSaved] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [sheet, setSheet] = useState<"order" | "item" | null>(null);
+  const [sheet, setSheet] = useState<"order" | "item" | "month" | null>(null);
   const [exporting, setExporting] = useState(false);
   const [openOrderKey, setOpenOrderKey] = useState<string | null>(null);
   const [view, setView] = useState<"daily" | "transfers">("daily");
@@ -376,15 +378,16 @@ export function App() {
               />
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <ToolButton icon={<Plus className="size-4" />} label="New order" onClick={() => setSheet("order")} />
               <ToolButton icon={<PackagePlus className="size-4" />} label="New item" onClick={() => setSheet("item")} />
               <ToolButton
                 icon={<FileDown className="size-4" />}
-                label={exporting ? "Making…" : "PDF"}
+                label={exporting ? "Making…" : "Day PDF"}
                 disabled={exporting}
                 onClick={() => void exportPdf()}
               />
+              <ToolButton icon={<CalendarRange className="size-4" />} label="Month report" onClick={() => setSheet("month")} />
             </div>
             {dirty ? (
               <p className="mt-1 text-[0.66rem] text-muted-foreground">
@@ -554,6 +557,7 @@ export function App() {
           }}
         />
       ) : null}
+      {sheet === "month" ? <MonthSheet dayTab={activeTab} onClose={() => setSheet(null)} /> : null}
       {sheet === "item" && ready ? (
         <NewItemSheet
           sections={sections}
@@ -940,6 +944,55 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
         {children}
       </div>
     </div>
+  );
+}
+
+/** Pick a month and download its report: every day tab added up, and the month's transfers. */
+function MonthSheet({ dayTab, onClose }: { dayTab: string; onClose: () => void }) {
+  const initial = (() => {
+    const [m, , y] = dayTab.split("/");
+    if (m && y) return `${y}-${m.padStart(2, "0")}`;
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const [month, setMonth] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const make = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await loadMonth(month);
+      const { exportMonthPdf } = await import("./pdf");
+      await exportMonthPdf(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet title="Monthly report" onClose={onClose}>
+      <label className="block">
+        <span className="text-[0.66rem] font-medium uppercase tracking-wide text-muted-foreground">Month</span>
+        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={`${inputClass} mt-1`} />
+      </label>
+      <p className="mt-2 text-[0.72rem] text-muted-foreground">
+        One PDF covering every day tab of the month: each item's opening, production, despatch and closing, the daily
+        totals, and all the month's transfers (route, direct sale and warehouse), by item and one by one.
+      </p>
+      {error ? <p className="mt-2 text-[0.75rem] text-destructive">{error}</p> : null}
+      <button
+        onClick={() => void make()}
+        disabled={busy || !month}
+        className="mb-4 mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+      >
+        <FileDown className="size-4" />
+        {busy ? "Reading the month… (can take ~20 s)" : "Make the PDF"}
+      </button>
+    </Sheet>
   );
 }
 

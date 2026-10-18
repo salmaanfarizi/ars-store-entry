@@ -1,6 +1,6 @@
 import { fmt, shortDate } from "./api";
 import { orderDue, pendingOrder, shortfall, stockSignal } from "./insights";
-import type { DailyData, Transfer } from "./types";
+import type { DailyData, MonthData, Transfer } from "./types";
 
 const NAVY: [number, number, number] = [32, 35, 87];
 const ORANGE: [number, number, number] = [245, 166, 35];
@@ -70,6 +70,11 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
   const lowMoving = data.rows.map((r) => ({ r, s: stockSignal(r) })).filter((x) => x.s.alert);
 
   const heading = (title: string) => {
+    // Don't leave a heading alone at the foot of a page.
+    if (y > doc.internal.pageSize.getHeight() - 35) {
+      doc.addPage();
+      y = 16;
+    }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(...NAVY);
@@ -104,32 +109,6 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
         const d = due[cell.row.index]?.due;
         cell.cell.styles.fillColor = d?.kind === "late" ? LATE : SOON;
       },
-    });
-    after();
-  } else {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("None.", margin, y + 4);
-    y += 11;
-  }
-
-  heading(`Low stock, moving well (${lowMoving.length})`);
-  if (lowMoving.length) {
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [["Item", "Section", "Closing", "Minimum", "Avg / day", "Days of cover", "Moved on"]],
-      body: lowMoving.map(({ r, s }) => [
-        r.item,
-        r.section,
-        fmt(r.closing),
-        fmt(r.mini),
-        s.perDay == null ? "-" : s.perDay.toFixed(1),
-        s.coverDays == null ? "-" : s.coverDays.toFixed(1),
-        `${r.movement.active} of ${r.movement.days} days`,
-      ]),
-      styles: { fontSize: 8, cellPadding: 1.4 },
-      headStyles: { fillColor: NAVY },
     });
     after();
   } else {
@@ -191,6 +170,33 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
       else if (flag === "low" && cell.column.index === 5) cell.cell.styles.textColor = [190, 30, 30];
     },
   });
+  after();
+
+  heading(`Low stock, moving well (${lowMoving.length})`);
+  if (lowMoving.length) {
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["Item", "Section", "Closing", "Minimum", "Avg / day", "Days of cover", "Moved on"]],
+      body: lowMoving.map(({ r, s }) => [
+        r.item,
+        r.section,
+        fmt(r.closing),
+        fmt(r.mini),
+        s.perDay == null ? "-" : s.perDay.toFixed(1),
+        s.coverDays == null ? "-" : s.coverDays.toFixed(1),
+        `${r.movement.active} of ${r.movement.days} days`,
+      ]),
+      styles: { fontSize: 8, cellPadding: 1.4 },
+      headStyles: { fillColor: NAVY },
+    });
+    after();
+  } else {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("None.", margin, y + 4);
+    y += 11;
+  }
 
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
@@ -301,6 +307,11 @@ export async function exportTransfersDayPdf(date: string, transfers: Transfer[])
 
   let y = 37;
   const heading = (title: string) => {
+    // Don't leave a heading alone at the foot of a page.
+    if (y > doc.internal.pageSize.getHeight() - 35) {
+      doc.addPage();
+      y = 16;
+    }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(...NAVY);
@@ -393,4 +404,175 @@ export async function exportTransfersDayPdf(date: string, transfers: Transfer[])
   }
 
   doc.save(`transfers-${date}.pdf`);
+}
+
+/** A month of the store sheet in one PDF: daily totals, each item's month, then transfers. */
+export async function exportMonthPdf(data: MonthData): Promise<void> {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 10;
+  const [yy = 0, mm = 1] = data.month.split("-").map(Number);
+  const monthName = new Date(yy, mm - 1, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  const sum = <T,>(xs: T[], f: (x: T) => number) => xs.reduce((n, x) => n + f(x), 0);
+  const production = sum(data.days, (d) => d.production);
+  const despatch = sum(data.days, (d) => d.despatch);
+  const first = data.days[0]?.tab ?? "-";
+  const last = data.days.at(-1)?.tab ?? "-";
+
+  drawHeader(doc, await logoDataUrl(), `Monthly Report - ${monthName}`, [
+    `ARS International Co SPC  |  ${data.days.length} day tabs, ${first} to ${last}`,
+    `Production ${fmt(production)}  |  Despatch ${fmt(despatch)}  |  ${data.transfers.length} transfers  |  Generated ${generatedAt()}`,
+  ]);
+
+  let y = 37;
+  const heading = (title: string) => {
+    if (y > doc.internal.pageSize.getHeight() - 35) {
+      doc.addPage();
+      y = 16;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...NAVY);
+    doc.text(title, margin, y);
+    doc.setTextColor(30, 30, 30);
+    y += 2;
+  };
+  const after = () => {
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  };
+  const none = (text: string) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(text, margin, y + 4);
+    y += 11;
+  };
+  const base = {
+    margin: { left: margin, right: margin },
+    styles: { fontSize: 8, cellPadding: 1.4 },
+    headStyles: { fillColor: NAVY },
+    footStyles: { fillColor: [232, 233, 243] as [number, number, number], textColor: [30, 30, 30] as [number, number, number], fontStyle: "bold" as const },
+  };
+  const right = (n: number) => ({ content: fmt(n), styles: { halign: "right" as const } });
+
+  // 1. Each item over the month, by section.
+  heading("Finished goods for the month");
+  if (!data.items.length) none("No day tabs in this month.");
+  else {
+    type Cell = string | { content: string; colSpan?: number; styles: Record<string, unknown> };
+    const body: Cell[][] = [];
+    for (const section of [...new Set(data.items.map((i) => i.section))]) {
+      const rows = data.items.filter((i) => i.section === section);
+      body.push([{ content: section, colSpan: 6, styles: { fillColor: [232, 233, 243], fontStyle: "bold" } }]);
+      for (const i of rows) {
+        body.push([i.code, i.item, fmt(i.opening), i.production ? fmt(i.production) : "", i.despatch ? fmt(i.despatch) : "", fmt(i.closing)]);
+      }
+    }
+    autoTable(doc, {
+      ...base,
+      startY: y,
+      head: [["Code", "Item", "Opening", "Production", "Despatch", "Closing"]],
+      body,
+      foot: [["", "Total", "", right(production), right(despatch), ""]],
+      styles: { fontSize: 7.5, cellPadding: 1.2 },
+      columnStyles: { 1: { cellWidth: 92 }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" } },
+    });
+    after();
+  }
+
+  // 2. Day by day.
+  heading("Day by day");
+  if (!data.days.length) none("No day tabs in this month.");
+  else {
+    autoTable(doc, {
+      ...base,
+      startY: y,
+      head: [["Day", "Production", "Despatch", "Absentees"]],
+      body: data.days.map((d) => [d.tab, fmt(d.production), fmt(d.despatch), d.error ? "could not read tab" : d.absentees || "-"]),
+      foot: [["Total", right(production), right(despatch), ""]],
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } },
+    });
+    after();
+  }
+
+  // 3. Transfers: by kind, by item, then each one.
+  const kinds = ["route", "direct", "warehouse"] as const;
+  const kindName = { route: "Route", direct: "Direct sale", warehouse: "Warehouse" } as const;
+  const qty = (t: Transfer) => sum(t.lines, (l) => l.stockTransfer);
+  heading(`Transfers (${data.transfers.length})`);
+  if (!data.transfers.length) none("No transfers in this month.");
+  else {
+    autoTable(doc, {
+      ...base,
+      startY: y,
+      head: [["Type", "Transfers", "Quantity"]],
+      body: kinds.map((k) => {
+        const ts = data.transfers.filter((t) => t.kind === k);
+        return [kindName[k], String(ts.length), fmt(sum(ts, qty))];
+      }),
+      foot: [["Total", right(data.transfers.length), right(sum(data.transfers, qty))]],
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } },
+      tableWidth: 110,
+    });
+    after();
+
+    type Sum = { code: string; name: string; unit: string; route: number; direct: number; warehouse: number };
+    const sums = new Map<string, Sum>();
+    for (const t of data.transfers) {
+      for (const l of t.lines) {
+        const key = `${l.code}|${l.name}|${l.unit}`;
+        const s = sums.get(key) ?? { code: l.code, name: l.name, unit: l.unit, route: 0, direct: 0, warehouse: 0 };
+        s[t.kind] += l.stockTransfer;
+        sums.set(key, s);
+      }
+    }
+    const items = [...sums.values()].sort((a, b) => a.name.localeCompare(b.name));
+    heading(`Transfers by item (${items.length})`);
+    autoTable(doc, {
+      ...base,
+      startY: y,
+      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Total"]],
+      body: items.map((s) => [
+        s.code,
+        s.name,
+        s.unit,
+        s.route ? fmt(s.route) : "",
+        s.direct ? fmt(s.direct) : "",
+        s.warehouse ? fmt(s.warehouse) : "",
+        fmt(s.route + s.direct + s.warehouse),
+      ]),
+      foot: [["", "Total", "", ...kinds.map((k) => right(sum(items, (s) => s[k]))), right(sum(items, (s) => s.route + s.direct + s.warehouse))]],
+      columnStyles: { 1: { cellWidth: 78 }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right", fontStyle: "bold" } },
+    });
+    after();
+
+    heading("Every transfer");
+    autoTable(doc, {
+      ...base,
+      startY: y,
+      head: [["Date", "Doc no", "Type", "To", "Invoice / requisition", "Items", "Quantity"]],
+      body: data.transfers.map((t) => [
+        shortDate(t.date),
+        t.docNo,
+        kindName[t.kind],
+        t.kind === "route" ? `${t.salesman || "-"} (${t.route || "-"})` : t.salesman || t.route || "-",
+        [t.invoiceNo && `Inv ${t.invoiceNo}`, t.requisitionRef].filter(Boolean).join("  ") || "-",
+        String(t.lines.length),
+        fmt(qty(t)),
+      ]),
+      styles: { fontSize: 7.5, cellPadding: 1.2 },
+      columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
+    });
+  }
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`${monthName}  |  Page ${i} of ${pages}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 6, { align: "center" });
+  }
+
+  doc.save(`monthly-report-${data.month}.pdf`);
 }

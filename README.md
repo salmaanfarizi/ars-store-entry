@@ -25,6 +25,13 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
 - **Orders due within 2 days.** Any open order (not MET) due today, tomorrow or the day after,
   or already late, is counted at the top and marked on its item, with how many it is short of
   closing stock. Late orders are red, the rest amber.
+- **Monthly report** (Daily entry → *Month report*): pick a month for one PDF of every day tab in
+  it — each item's opening (first day), production and despatch (summed) and closing (last
+  day), the daily totals with absentees — and all its transfers by kind, by item and one by one.
+  Past tabs are cached for an hour, so a second report is quick.
+- **Day PDF** lists orders due, then all items, then low stock moving well, last.
+- Items are read down to the first blank row, so the packing-roll and cover tables under them
+  never show up as items.
 - **Only pending orders are shown.** A MET order doesn't appear on its item, in *With orders* or in
   the PDF; *Order* on that item starts a new one.
 - **Low stock, moving well.** For each item the script reads Despatch from the last 14 day
