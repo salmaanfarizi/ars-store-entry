@@ -102,7 +102,7 @@ Retire the old transfer app once this is live, so two apps don't number transfer
    | `ENTRY_SCRIPT_URL` | the web app URL (…/exec) |
    | `ENTRY_SCRIPT_SECRET` | the same value as the script's `SECRET` property |
    | `APP_PASSCODE` | the team passcode people type once per phone |
-   | `NEXTDAY_SCRIPT_URL` | optional: the sheet's own script deployed as a web app, with `next-day-api.gs` added (see that file) — turns on *Create today's tab* |
+   | `NEXTDAY_SCRIPT_URL` | optional: the sheet's own script deployed as a web app, with `next-day-api.gs` added (see that file; its secret is the STORE_ENTRY_SECRET property) — turns on *Create today's tab* |
 
    Then redeploy. Until the first two are set the app says it isn't connected.
 

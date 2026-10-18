@@ -15,24 +15,37 @@
  *     empty) — type the date on the new sheet.
  *
  * Setup, once:
- *   1. Make sure no other file in this project defines doPost (Apps Script shares one
- *      namespace; the last doPost would win, as onOpen once did).
- *   2. Project Settings → Script Properties → add SECRET with the same value as Store Entry's
- *      ENTRY_SCRIPT_SECRET.
- *   3. Deploy → New deployment → Web app. Execute as: Me. Who has access: Anyone.
- *      Put the …/exec URL in Netlify as NEXTDAY_SCRIPT_URL and redeploy the site.
- *   After editing, Deploy → Manage deployments → Edit → New version keeps the same URL.
+ *   1. This file defines no doPost: the project already has one, and Apps Script keeps only
+ *      one per project. Make the existing doPost start with
+ *          const storeEntry = storeEntryPost_(e);
+ *          if (storeEntry) return storeEntry;
+ *      Anything that isn't a Store Entry request goes on through doPost exactly as before.
+ *   2. Project Settings → Script Properties → add STORE_ENTRY_SECRET with the same value as
+ *      Store Entry's ENTRY_SCRIPT_SECRET.
+ *   3. If the project is already deployed as a web app (Execute as: Me, access: Anyone), use
+ *      Deploy → Manage deployments → Edit → New version and keep its URL; otherwise
+ *      Deploy → New deployment → Web app with those settings. Put the …/exec URL in Netlify as
+ *      NEXTDAY_SCRIPT_URL and redeploy the site.
  */
 
-function doPost(e) {
+/**
+ * Called first thing from the project's existing doPost (see setup above). Returns the reply
+ * for a Store Entry request, or null for anything else so doPost carries on as before.
+ */
+function storeEntryPost_(e) {
+  let body;
+  try {
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (err) {
+    return null;
+  }
+  if (!body || body.action !== 'nextDay') return null;
+
   let out;
   try {
-    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    const secret = PropertiesService.getScriptProperties().getProperty('SECRET');
+    const secret = PropertiesService.getScriptProperties().getProperty('STORE_ENTRY_SECRET');
     if (!secret || body.secret !== secret) {
       out = { ok: false, error: 'unauthorized' };
-    } else if (body.action !== 'nextDay') {
-      out = { ok: false, error: 'Unknown action.' };
     } else {
       const lock = LockService.getScriptLock();
       lock.waitLock(20000);
