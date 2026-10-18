@@ -23,6 +23,22 @@
 
 const SHEET_ID = '1l1YuOxJ5W-lWxD-xgC2ZlfatNxDN4HuVAbaf4SL4vxU';
 
+/** "salesman requisition and transfer": the requisition app's sheet, where transfers are kept too. */
+const REQ_SHEET_ID = '1_4gVRDumT2YYDYAQFGZMR8FdJRI1MvV7rVkUoVWLFlg';
+
+/** Same columns, in the same order, as the old stock-transfer app wrote them. */
+const TRANSFER_HEADER = [
+  'doc_no', 'trf_date', 'salesman', 'route', 'requisition_ref',
+  'item_code', 'item_name', 'unit',
+  'stock_transfer', 'physical_stock', 'system_stock', 'pieces_reimbursed', 'variance',
+  'notes', 'created_at',
+];
+
+const TRANSFER_UNITS = ['Bag', 'Bundle', 'Box', 'Carton'];
+
+/** How many past transfers the app lists. */
+const RECENT_TRANSFERS = 40;
+
 /** Day tabs are named by date (10/15/2026); "today" is decided in Saudi time. */
 const TIME_ZONE = 'Asia/Riyadh';
 
@@ -59,6 +75,7 @@ function doGet(e) {
   return respond_(function () {
     const params = (e && e.parameter) || {};
     checkSecret_(params.secret);
+    if (params.view === 'transfers') return readTransfers_();
     return readDaily_(SpreadsheetApp.openById(SHEET_ID), params.tab);
   });
 }
@@ -70,7 +87,7 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(20000);
     try {
-      return writeDaily_(body);
+      return body.action === 'transfer' ? writeTransfer_(body) : writeDaily_(body);
     } finally {
       lock.releaseLock();
     }
@@ -652,6 +669,291 @@ function addItem_(sheet, spec) {
     const cell = sheet.getRange(x.row, 1);
     if (Number(cell.getValue()) !== i + 1) cell.setValue(i + 1);
   });
+}
+
+/* ------------------------------- transfers ------------------------------- */
+
+function reqSheet_(name) {
+  const sheet = SpreadsheetApp.openById(REQ_SHEET_ID).getSheetByName(name);
+  if (!sheet) throw new Error('The requisition sheet has no "' + name + '" tab.');
+  return sheet;
+}
+
+/** A tab's rows as display text, header included. */
+function rowsOf_(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return [];
+  return sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+}
+
+/** First column whose header contains one of the needles (as the old apps read Items and Salesmen). */
+function colOf_(header, needles, fallback) {
+  const lower = header.map(norm_);
+  for (let n = 0; n < needles.length; n++) {
+    const i = lower.findIndex(function (h) {
+      return h.indexOf(needles[n]) >= 0;
+    });
+    if (i >= 0) return i;
+  }
+  return fallback;
+}
+
+/** "2026-06-22", or a date cell shown some other way, as yyyy-mm-dd. */
+function isoOf_(text) {
+  const t = String(text || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (us) return us[3] + '-' + ('0' + us[1]).slice(-2) + '-' + ('0' + us[2]).slice(-2);
+  return t;
+}
+
+/**
+ * What the transfer screen needs: open requisitions (no transfer made against them yet) with
+ * their lines, recent transfers, the item list with units, and the salesmen by route.
+ */
+function readTransfers_() {
+  const itemRows = rowsOf_(reqSheet_('Items'));
+  const ih = itemRows[0] || [];
+  const codeI = colOf_(ih, ['code'], 0);
+  const nameI = colOf_(ih, ['name', 'item', 'description'], 1);
+  const unitI = colOf_(ih, ['uom', 'unit'], -1);
+  const items = itemRows
+    .slice(1)
+    .map(function (r) {
+      return {
+        code: String(r[codeI] || '').trim(),
+        name: String(r[nameI] || '').trim(),
+        unit: unitI >= 0 ? String(r[unitI] || '').trim() : '',
+      };
+    })
+    .filter(function (i) {
+      return i.name;
+    });
+
+  const smRows = rowsOf_(reqSheet_('Salesmen'));
+  const sh = smRows[0] || [];
+  const routeI = colOf_(sh, ['route', 'area'], 0);
+  const smI = colOf_(sh, ['salesman', 'sales', 'name', 'man'], 1);
+  const salesmen = smRows
+    .slice(1)
+    .map(function (r) {
+      return { route: String(r[routeI] || '').trim(), name: String(r[smI] || '').trim() };
+    })
+    .filter(function (s) {
+      return s.route || s.name;
+    });
+
+  const trfRows = rowsOf_(reqSheet_('Transfers'));
+  const used = {};
+  const transfers = {};
+  const order = [];
+  trfRows.slice(1).forEach(function (r) {
+    const doc = String(r[0] || '').trim();
+    if (!doc) return;
+    if (r[4]) used[String(r[4]).trim()] = doc;
+    if (!transfers[doc]) {
+      transfers[doc] = {
+        docNo: doc,
+        date: isoOf_(r[1]),
+        salesman: String(r[2] || ''),
+        route: String(r[3] || ''),
+        requisitionRef: String(r[4] || ''),
+        notes: String(r[13] || ''),
+        createdAt: String(r[14] || ''),
+        lines: [],
+      };
+      order.push(doc);
+    }
+    transfers[doc].lines.push({
+      code: String(r[5] || ''),
+      name: String(r[6] || ''),
+      unit: String(r[7] || ''),
+      stockTransfer: num_(r[8]) || 0,
+      physicalStock: num_(r[9]) || 0,
+      systemStock: num_(r[10]) || 0,
+      piecesReimbursed: num_(r[11]) || 0,
+      variance: num_(r[12]) || 0,
+    });
+  });
+
+  const reqRows = rowsOf_(reqSheet_('Requisitions'));
+  const reqs = {};
+  const reqOrder = [];
+  reqRows.slice(1).forEach(function (r) {
+    const doc = String(r[0] || '').trim();
+    if (!doc || used[doc]) return;
+    if (!reqs[doc]) {
+      reqs[doc] = {
+        docNo: doc,
+        date: isoOf_(r[1]),
+        salesman: String(r[2] || ''),
+        route: String(r[3] || ''),
+        notes: String(r[8] || ''),
+        lines: [],
+      };
+      reqOrder.push(doc);
+    }
+    reqs[doc].lines.push({
+      code: String(r[4] || ''),
+      name: String(r[5] || ''),
+      unit: String(r[6] || ''),
+      quantity: num_(r[7]) || 0,
+    });
+  });
+
+  const newestFirst = function (a, b) {
+    return a < b ? 1 : a > b ? -1 : 0;
+  };
+  return {
+    ok: true,
+    items: items,
+    salesmen: salesmen,
+    units: TRANSFER_UNITS,
+    requisitions: reqOrder.sort(newestFirst).map(function (d) {
+      return reqs[d];
+    }),
+    transfers: order
+      .sort(newestFirst)
+      .slice(0, RECENT_TRANSFERS)
+      .map(function (d) {
+        return transfers[d];
+      }),
+  };
+}
+
+/** TRF-<year>-0001, one more than the highest number used this year (as the old app numbered). */
+function nextTransferNo_(rows) {
+  const year = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy');
+  const prefix = 'TRF-' + year + '-';
+  let max = 0;
+  rows.slice(1).forEach(function (r) {
+    const dn = String(r[0] || '');
+    if (dn.indexOf(prefix) !== 0) return;
+    const n = parseInt(dn.slice(prefix.length), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+  return prefix + ('000' + (max + 1)).slice(-4);
+}
+
+function amount_(v, label, item) {
+  const n = Number(v == null || v === '' ? 0 : v);
+  if (!isFinite(n) || n < 0) throw new Error('"' + item + '": ' + label + ' must be zero or more.');
+  return n;
+}
+
+/**
+ * Saves a stock transfer to a salesman. Rows go to the Transfers tab of the requisition sheet,
+ * exactly as the old transfer app wrote them, and each line's quantity is added to Despatch on
+ * the day tab for the transfer's date, against the store row the person chose for it.
+ * Everything is checked before anything is written.
+ */
+function writeTransfer_(body) {
+  const date = String(body.date || '').trim();
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw new Error('Pick the transfer date.');
+  const route = String(body.route || '').trim();
+  const salesman = String(body.salesman || '').trim();
+  if (!route && !salesman) throw new Error('Pick the route or salesman.');
+  const ref = String(body.requisitionRef || '').trim();
+  const notes = String(body.notes || '').trim().slice(0, 300);
+
+  const trfSheet = reqSheet_('Transfers');
+  const existing = rowsOf_(trfSheet);
+  if (ref) {
+    const dup = existing.slice(1).filter(function (r) {
+      return String(r[4] || '').trim() === ref;
+    })[0];
+    if (dup) throw new Error(ref + ' was already transferred as ' + dup[0] + '.');
+  }
+
+  const lines = (body.lines || []).map(function (l) {
+    const item = required_(l.name || l.code, 'item');
+    const line = {
+      code: String(l.code || '').trim(),
+      name: String(l.name || '').trim(),
+      unit: String(l.unit || '').trim(),
+      stockTransfer: amount_(l.stockTransfer, 'transfer quantity', item),
+      physicalStock: amount_(l.physicalStock, 'physical stock', item),
+      systemStock: amount_(l.systemStock, 'system stock', item),
+      piecesReimbursed: amount_(l.piecesReimbursed, 'pieces reimbursed', item),
+      target: l.target || null,
+    };
+    if (!line.code) throw new Error('"' + item + '" has no item code.');
+    return line;
+  });
+  if (!lines.length) throw new Error('Add at least one item.');
+
+  // Despatch: the day tab for the transfer's date, and the store row for each line.
+  const dayName = Number(m[2]) + '/' + Number(m[3]) + '/' + m[1];
+  const despatch = lines.filter(function (l) {
+    return l.target && l.stockTransfer > 0;
+  });
+  const plan = [];
+  if (despatch.length) {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const day = datedTabs_(ss).filter(function (t) {
+      return t.name === dayName;
+    })[0];
+    if (!day) {
+      throw new Error('There is no ' + dayName + ' tab in the store sheet yet, so Despatch has nowhere to go. Make the day with ➕ Next Day first.');
+    }
+    const layout = readLayout_(day.sheet);
+    const col = colOrThrow_(layout, 'despatch', dayName);
+    const added = {};
+    despatch.forEach(function (l) {
+      const hit = findItem_(layout, {
+        section: required_(l.target.section, 'store section'),
+        code: String(l.target.code || '').trim(),
+        item: required_(l.target.item, 'store item'),
+      });
+      if (!hit) throw new Error('"' + l.target.item + '" is not on the ' + dayName + ' tab.');
+      const range = day.sheet.getRange(hit.row, col);
+      if (range.getFormula()) throw new Error('"' + l.target.item + '": Despatch is calculated on the sheet.');
+      // Two lines can land on the same store row; add them up rather than overwrite.
+      const key = String(hit.row);
+      if (!added[key]) {
+        added[key] = { range: range, item: hit.item, start: Number(range.getValue()) || 0, plus: 0 };
+        plan.push(added[key]);
+      }
+      added[key].plus += l.stockTransfer;
+    });
+  }
+
+  const docNo = nextTransferNo_(existing.length ? existing : [TRANSFER_HEADER]);
+  const createdAt = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM-dd HH:mm:ss');
+  const rows = lines.map(function (l) {
+    return [
+      docNo, date, salesman, route, ref,
+      l.code, l.name, l.unit,
+      l.stockTransfer, l.physicalStock, l.systemStock, l.piecesReimbursed, l.physicalStock - l.systemStock,
+      notes, createdAt,
+    ];
+  });
+
+  if (!existing.length) {
+    trfSheet.getRange(1, 1, 1, TRANSFER_HEADER.length).setValues([TRANSFER_HEADER]);
+  }
+  const start = trfSheet.getLastRow() + 1;
+  const block = trfSheet.getRange(start, 1, rows.length, TRANSFER_HEADER.length);
+  // Text columns stay text (no date or number guessing), as the old app's RAW writes left them.
+  trfSheet.getRange(start, 1, rows.length, 8).setNumberFormat('@');
+  trfSheet.getRange(start, 14, rows.length, 2).setNumberFormat('@');
+  block.setValues(rows);
+
+  plan.forEach(function (p) {
+    p.range.setValue(p.start + p.plus);
+  });
+  SpreadsheetApp.flush();
+
+  return {
+    ok: true,
+    docNo: docNo,
+    day: dayName,
+    despatched: plan.map(function (p) {
+      return { item: p.item, added: p.plus, despatch: p.start + p.plus };
+    }),
+  };
 }
 
 /* -------------------------------- setup -------------------------------- */

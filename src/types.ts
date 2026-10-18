@@ -79,3 +79,68 @@ export type DailyWrite = {
     order?: OrderEdit;
   }[];
 };
+
+/* -------------------------------- transfers -------------------------------- */
+
+/** A requisition from the requisition app with no transfer made against it yet. */
+export type Requisition = {
+  docNo: string;
+  /** yyyy-mm-dd */
+  date: string;
+  salesman: string;
+  route: string;
+  notes: string;
+  lines: { code: string; name: string; unit: string; quantity: number }[];
+};
+
+export type TransferLine = {
+  code: string;
+  name: string;
+  unit: string;
+  stockTransfer: number;
+  physicalStock: number;
+  systemStock: number;
+  piecesReimbursed: number;
+  variance: number;
+};
+
+/** A saved transfer, as the Transfers tab of the requisition sheet holds it. */
+export type Transfer = {
+  docNo: string;
+  date: string;
+  salesman: string;
+  route: string;
+  requisitionRef: string;
+  notes: string;
+  createdAt: string;
+  lines: TransferLine[];
+};
+
+export type TransferData = {
+  configured: boolean;
+  items: { code: string; name: string; unit: string }[];
+  salesmen: { route: string; name: string }[];
+  units: string[];
+  requisitions: Requisition[];
+  transfers: Transfer[];
+  error?: string;
+};
+
+/** Which day-tab row a transfer line's quantity is added to as Despatch. */
+export type StoreTarget = { section: string; code: string; item: string };
+
+export type TransferWrite = {
+  /** yyyy-mm-dd; Despatch goes to the day tab of this date. */
+  date: string;
+  route: string;
+  salesman: string;
+  requisitionRef: string;
+  notes: string;
+  lines: (Omit<TransferLine, "variance"> & { target: StoreTarget | null })[];
+};
+
+export type TransferResult = {
+  docNo: string;
+  day: string;
+  despatched: { item: string; added: number; despatch: number }[];
+};
