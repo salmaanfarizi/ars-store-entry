@@ -25,6 +25,8 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
 - **Orders due within 2 days.** Any open order (not MET) due today, tomorrow or the day after,
   or already late, is counted at the top and marked on its item, with how many it is short of
   closing stock. Late orders are red, the rest amber.
+- **Only pending orders are shown.** A MET order doesn't appear on its item, in *With orders* or in
+  the PDF; *Order* on that item starts a new one.
 - **Low stock, moving well.** For each item the script reads Despatch from the last 14 day
   tabs (past tabs cached for 6 hours). An item is flagged when it **moved** (despatched on at
   least 4 of those days) **and** is **low**: closing below its Mini Level, or less than 7

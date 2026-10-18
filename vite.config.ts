@@ -54,7 +54,10 @@ function devDailyApi(): Plugin {
         ...row("RIYADH SUNFLOWER SEEDS IN BUNDLE/BAGS/CARTON", "4407", "20 Grams Sunflower Seeds (6x 30) Master Carton", 218, null, 300, 3, 60),
         order: { qty: 50, text: "50", deliverBy: inDays(-1), status: "PENDING" },
       },
-      row("POPCORN IN CARTON", "1712", "PC- Salted-16 gm (8 x 8) Master Carton", 19, null, 100, 1, 4),
+      {
+        ...row("POPCORN IN CARTON", "1712", "PC- Salted-16 gm (8 x 8) Master Carton", 19, null, 100, 1, 4),
+        order: { qty: 30, text: "30", deliverBy: inDays(-3), status: "MET" },
+      },
     ],
   };
 

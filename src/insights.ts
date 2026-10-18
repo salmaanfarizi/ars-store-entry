@@ -13,6 +13,10 @@ export const MOVING_MIN_DAYS = 4;
 export const isClosedStatus = (status: string) =>
   /^met$|deliver|cancel|done|complet|closed/i.test(status.trim());
 
+/** The row's order while it still needs delivering; a MET (or otherwise closed) order is null. */
+export const pendingOrder = (row: DailyRow): OrderCell | null =>
+  row.order && !isClosedStatus(row.order.status) ? row.order : null;
+
 const startOfToday = () => {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());

@@ -1,5 +1,5 @@
 import { fmt, shortDate } from "./api";
-import { orderDue, shortfall, stockSignal } from "./insights";
+import { orderDue, pendingOrder, shortfall, stockSignal } from "./insights";
 import type { DailyData, Transfer } from "./types";
 
 const NAVY: [number, number, number] = [32, 35, 87];
@@ -150,6 +150,8 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
     for (const r of data.rows.filter((x) => x.section === section)) {
       const d = orderDue(r.order);
       const s = stockSignal(r);
+      // Met orders are done with; only pending ones are printed.
+      const order = pendingOrder(r);
       body.push([
         r.code,
         r.item,
@@ -158,9 +160,9 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
         r.despatch == null ? "" : fmt(r.despatch),
         fmt(r.closing),
         fmt(r.mini),
-        r.order?.text || "",
-        r.order?.deliverBy ? shortDate(r.order.deliverBy) : "",
-        r.order?.status || "",
+        order?.text || "",
+        order?.deliverBy ? shortDate(order.deliverBy) : "",
+        order?.status || "",
       ]);
       flags.push(d?.kind === "late" ? "late" : d ? "soon" : s.alert ? "low" : null);
     }
