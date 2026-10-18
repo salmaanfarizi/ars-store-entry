@@ -17,7 +17,29 @@ export type DailyRow = {
   production: number | null;
   despatch: number | null;
   closing: number | null;
+  /** The Mini Level cell: below this the item is short. */
+  mini: number | null;
+  /** Despatch over the last two weeks of day tabs, up to this one. */
+  movement: Movement;
   order: OrderCell | null;
+};
+
+export type Movement = {
+  /** Day tabs looked at. */
+  days: number;
+  /** Days it was despatched at all. */
+  active: number;
+  /** Total despatched over those days. */
+  total: number;
+};
+
+/** An item to add as a new row at the end of its section. */
+export type NewItem = {
+  section: string;
+  code: string;
+  item: string;
+  opening: number;
+  mini: number | null;
 };
 
 /** A day tab read live from the sheet, so an entry never starts from stale numbers. */
@@ -47,6 +69,7 @@ export type OrderEdit =
 export type DailyWrite = {
   tab: string;
   absentees?: string;
+  newItems?: NewItem[];
   entries: {
     section: string;
     code: string;

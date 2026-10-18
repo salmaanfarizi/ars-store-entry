@@ -32,6 +32,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-surface: var(--surface);
+  --color-brand: var(--brand);
+  --color-brand-accent: var(--brand-accent);
 }
 
 :root {
@@ -41,7 +43,10 @@
   --surface: oklch(0.955 0.016 95);
   --card: oklch(0.995 0.005 95);
   --card-foreground: oklch(0.24 0.03 150);
-  --primary: oklch(0.42 0.09 155);
+  /* Abu Salim navy and orange, taken from the logo. */
+  --brand: rgb(32 35 87);
+  --brand-accent: rgb(245 166 35);
+  --primary: rgb(32 35 87);
   --primary-foreground: oklch(0.98 0.01 95);
   --secondary: oklch(0.93 0.02 120);
   --secondary-foreground: oklch(0.3 0.04 150);
@@ -57,7 +62,7 @@
   --success-foreground: oklch(0.98 0.01 95);
   --border: oklch(0.89 0.014 100);
   --input: oklch(0.89 0.014 100);
-  --ring: oklch(0.42 0.09 155);
+  --ring: rgb(32 35 87);
 }
 
 @layer base {

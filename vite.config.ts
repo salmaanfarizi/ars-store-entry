@@ -11,7 +11,16 @@ import type { DailyData, DailyWrite } from "./src/types.ts";
  */
 function devDailyApi(): Plugin {
   const passcode = process.env.APP_PASSCODE ?? "dev";
-  const row = (section: string, code: string, item: string, opening: number, despatch: number | null) => ({
+  const row = (
+    section: string,
+    code: string,
+    item: string,
+    opening: number,
+    despatch: number | null,
+    mini: number | null,
+    active: number,
+    total: number,
+  ) => ({
     section,
     code,
     item,
@@ -19,8 +28,15 @@ function devDailyApi(): Plugin {
     production: null,
     despatch,
     closing: opening - (despatch ?? 0),
-    order: null,
+    mini,
+    movement: { days: 14, active, total },
+    order: null as DailyData["rows"][number]["order"],
   });
+  const inDays = (n: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
   const day: DailyData = {
     configured: true,
     tab: "10/18/2026",
@@ -28,13 +44,17 @@ function devDailyApi(): Plugin {
     absentees: "",
     statuses: ["PENDING", "MET"],
     rows: [
-      row("REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", "4402", "200 Grams Sunflower Seeds Bundles(10 Pieces x 5 Bags)", 722, 112),
-      row("REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", "1126", "10kg Blue Sunflower Seeds DAMMAM SPL(STD)", 280, null),
+      row("REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", "4402", "200 Grams Sunflower Seeds Bundles(10 Pieces x 5 Bags)", 722, 112, 800, 12, 1400),
+      row("REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", "1126", "10kg Blue Sunflower Seeds DAMMAM SPL(STD)", 280, null, 300, 2, 40),
       {
-        ...row("RIYADH SUNFLOWER SEEDS IN BUNDLE/BAGS/CARTON", "1127", "10kg Orange Sunflower Seeds Riyadh(ECO)", 0, null),
-        order: { qty: 200, text: "200", deliverBy: "2026-10-21", status: "PENDING" },
+        ...row("RIYADH SUNFLOWER SEEDS IN BUNDLE/BAGS/CARTON", "1127", "10kg Orange Sunflower Seeds Riyadh(ECO)", 0, null, 600, 6, 300),
+        order: { qty: 200, text: "200", deliverBy: inDays(1), status: "PENDING" },
       },
-      row("POPCORN IN CARTON", "1712", "PC- Salted-16 gm (8 x 8) Master Carton", 19, null),
+      {
+        ...row("RIYADH SUNFLOWER SEEDS IN BUNDLE/BAGS/CARTON", "4407", "20 Grams Sunflower Seeds (6x 30) Master Carton", 218, null, 300, 3, 60),
+        order: { qty: 50, text: "50", deliverBy: inDays(-1), status: "PENDING" },
+      },
+      row("POPCORN IN CARTON", "1712", "PC- Salted-16 gm (8 x 8) Master Carton", 19, null, 100, 1, 4),
     ],
   };
 
@@ -72,6 +92,12 @@ function devDailyApi(): Plugin {
           r.closing = (r.opening ?? 0) + (r.production ?? 0) - (r.despatch ?? 0);
         }
         if (body.absentees !== undefined) (day.absentees = body.absentees), cells++;
+        for (const n of body.newItems ?? []) {
+          const at = day.rows.map((r) => r.section).lastIndexOf(n.section);
+          const added = row(n.section, n.code, n.item, n.opening, null, n.mini, 0, 0);
+          day.rows.splice(at + 1, 0, added);
+          cells++;
+        }
         return send({ ok: true, tab: body.tab, cells });
       });
     },

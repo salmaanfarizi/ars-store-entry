@@ -20,6 +20,26 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
   miss one. Carrying orders to new days stays with the sheet's own ➕ Next Day.
 - **All or nothing.** The script checks every change first, then writes, under a lock.
 
+## Alerts, new items and PDF
+
+- **Orders due within 2 days.** Any open order (not MET) due today, tomorrow or the day after,
+  or already late, is counted at the top and marked on its item, with how many it is short of
+  closing stock. Late orders are red, the rest amber.
+- **Low stock, moving well.** For each item the script reads Despatch from the last 14 day
+  tabs (past tabs cached for 6 hours). An item is flagged when it **moved** (despatched on at
+  least 4 of those days) **and** is **low**: closing below its Mini Level, or less than 7
+  days of cover at its average daily despatch. The thresholds are at the top of
+  `src/insights.ts`.
+- **New order.** Pick any item, then quantity, deliver-by date and status. It's saved with
+  everything else.
+- **New item.** Section, code, name, opening stock and minimum level. On Save it becomes a
+  new row at the end of its section on that day's tab, formatted like the row above, with the
+  sheet's Closing and Required Qty formulas, and the No column is renumbered. Later days pick
+  it up through the sheet's ➕ Next Day. (If tomorrow's tab already exists, add it there in
+  the sheet as well.)
+- **PDF.** The day as saved in the sheet, on A4 with the Abu Salim logo: orders due, low
+  stock, then every item by section, with the same colours.
+
 ## Setting it up
 
 1. **Apps Script.** script.google.com → New project, paste `apps-script/entry.gs`, set
