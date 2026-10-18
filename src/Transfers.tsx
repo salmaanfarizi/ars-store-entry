@@ -83,6 +83,18 @@ export function KindBadge({ kind }: { kind: TransferKind }) {
   );
 }
 
+/** Open requisitions older than this many days are hidden: they were dealt with some other way. */
+const OPEN_REQUISITION_DAYS = 2;
+
+/** Whole days since a yyyy-mm-dd date; negative for a date ahead (a requisition for tomorrow). */
+function daysAgo(iso: string): number | null {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today.getTime() - new Date(y, m - 1, d).getTime()) / 86_400_000);
+}
+
 let nextId = 1;
 const n = (s: string) => {
   const v = Number(s.trim() || 0);
@@ -109,6 +121,7 @@ export function Transfers({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [done, setDone] = useState<{ result: TransferResult; transfer: Transfer } | null>(null);
+  const [showOlder, setShowOlder] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,11 +212,20 @@ export function Transfers({
     );
   }
 
+  // Recent ones only: today, the last two days, and any dated ahead. A requisition with an
+  // unreadable date stays listed rather than vanish.
+  const recent = data.requisitions.filter((r) => {
+    const age = daysAgo(r.date);
+    return age === null || age <= OPEN_REQUISITION_DAYS;
+  });
+  const older = data.requisitions.length - recent.length;
+  const listed = showOlder ? data.requisitions : recent;
+
   return (
     <>
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Open requisitions ({data.requisitions.length})
+          Open requisitions ({listed.length})
         </h2>
         <button
           onClick={() => void load()}
@@ -215,10 +237,12 @@ export function Transfers({
         </button>
       </div>
       <div className="card-surface mt-2 divide-y divide-border">
-        {data.requisitions.length === 0 ? (
-          <p className="p-4 text-center text-sm text-muted-foreground">Every requisition has been transferred.</p>
+        {listed.length === 0 ? (
+          <p className="p-4 text-center text-sm text-muted-foreground">
+            {older ? "No requisitions from the last two days." : "Every requisition has been transferred."}
+          </p>
         ) : (
-          data.requisitions.map((r) => (
+          listed.map((r) => (
             <button key={r.docNo} onClick={() => start(r)} className="flex w-full items-center justify-between gap-3 p-3 text-left">
               <div className="min-w-0">
                 <p className="text-sm font-semibold">
@@ -236,6 +260,11 @@ export function Transfers({
           ))
         )}
       </div>
+      {older ? (
+        <button onClick={() => setShowOlder((s) => !s)} className="mt-1.5 w-full text-center text-[0.72rem] font-medium text-muted-foreground underline-offset-2 hover:underline">
+          {showOlder ? "Hide older requisitions" : `Show ${older} older ${older === 1 ? "requisition" : "requisitions"}`}
+        </button>
+      ) : null}
       <button
         onClick={() => start(null)}
         className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm font-medium"
