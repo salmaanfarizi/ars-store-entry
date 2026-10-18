@@ -40,6 +40,26 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
 - **PDF.** The day as saved in the sheet, on A4 with the Abu Salim logo: orders due, low
   stock, then every item by section, with the same colours.
 
+## Transfers (merged from the stock-transfer app)
+
+The **Transfers** switch under the header replaces transfers.abusalim.sa. It reads and writes
+the requisition app's sheet (*salesman requisition and transfer*), so requisitions keep coming
+from salesreq.abusalim.sa.
+
+- **Open requisitions** are the ones with no transfer against them yet. Tap one and its items
+  fill in; enter Transfer, Physical, System and Pieces reimbursed. Variance = Physical − System.
+  A transfer can also be made without a requisition.
+- **Saved to the Transfers tab** with the same columns and `TRF-<year>-0001` numbering the old app
+  used, so its history carries on. A requisition can only be transferred once.
+- **Added to Despatch.** Each line's Transfer quantity is added to Despatch on the store's day
+  tab for the transfer date (that tab must exist). Each line suggests a store row: same item
+  code, then the closest name (1126 is two different bags), then the section for the route's
+  region (Riyadh / Kharj / Qaseem routes → the Riyadh section). It can be changed per line or
+  set to *Don't add*; codes the store sheet doesn't have can't be added.
+- **PDF** of each transfer with the logo and signature lines.
+
+Retire the old transfer app once this is live, so two apps don't number transfers at once.
+
 ## Setting it up
 
 1. **Apps Script.** script.google.com → New project, paste `apps-script/entry.gs`. In

@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import type { DailyData, DailyWrite } from "./src/types.ts";
+import type { DailyData, DailyWrite, TransferData, TransferWrite } from "./src/types.ts";
 
 /**
  * In-memory stand-in for /api/daily during `npm run dev`, so the form can be exercised with
@@ -104,8 +104,95 @@ function devDailyApi(): Plugin {
   };
 }
 
+/**
+ * In-memory stand-in for /api/transfers: two open requisitions from the real sheet's shape,
+ * and saves that answer as the script would (despatch is reported, not written anywhere).
+ */
+function devTransfersApi(): Plugin {
+  const passcode = process.env.APP_PASSCODE ?? "dev";
+  const transfers: TransferData["transfers"] = [];
+  const requisitions: TransferData["requisitions"] = [
+    {
+      docNo: "REQ-2026-0042",
+      date: "2026-10-18",
+      salesman: "Jaseel",
+      route: "Al Ahsa 3",
+      notes: "",
+      lines: [
+        { code: "4402", name: "200 Grams Sunflower Seeds (10 Pieces × 5 Bags)", unit: "Bundle", quantity: 15 },
+        { code: "1126", name: "10kg Blue Sunflower Seeds DAMMAM SPL (STD)", unit: "Bag", quantity: 4 },
+        { code: "1901", name: "Mango Cotton Candy", unit: "Carton", quantity: 2 },
+      ],
+    },
+    {
+      docNo: "REQ-2026-0041",
+      date: "2026-10-17",
+      salesman: "Khalid",
+      route: "Riyadh 3",
+      notes: "",
+      lines: [{ code: "4401", name: "100 Grams Sunflower Seeds (12 Pieces × 5 Bags)", unit: "Bundle", quantity: 10 }],
+    },
+  ];
+  const data = (): TransferData => ({
+    configured: true,
+    items: [
+      { code: "4402", name: "200 Grams Sunflower Seeds (10 Pieces × 5 Bags)", unit: "Bundle" },
+      { code: "4401", name: "100 Grams Sunflower Seeds (12 Pieces × 5 Bags)", unit: "Bundle" },
+      { code: "1126", name: "10kg Blue Sunflower Seeds DAMMAM SPL (STD)", unit: "Bag" },
+      { code: "1712", name: "PC – Salted 16 gm (8 × 8)", unit: "Carton" },
+      { code: "1901", name: "Mango Cotton Candy", unit: "Carton" },
+    ],
+    salesmen: [
+      { route: "Al Ahsa 3", name: "Jaseel" },
+      { route: "Riyadh 3", name: "Khalid" },
+    ],
+    units: ["Bag", "Bundle", "Box", "Carton"],
+    requisitions: requisitions.filter((r) => !transfers.some((t) => t.requisitionRef === r.docNo)),
+    transfers,
+  });
+
+  return {
+    name: "dev-transfers-api",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use("/api/transfers", async (req, res) => {
+        const send = (body: unknown, status = 200) => {
+          res.statusCode = status;
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          res.end(JSON.stringify(body));
+        };
+        if (req.method === "GET") return send(data());
+        if (req.method !== "POST") return send({ message: `${req.method} not supported.` }, 405);
+        if (req.headers["x-app-passcode"] !== passcode) return send({ message: "Wrong passcode." }, 401);
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as TransferWrite;
+        const docNo = `TRF-2026-${String(transfers.length + 101).padStart(4, "0")}`;
+        transfers.unshift({
+          docNo,
+          date: body.date,
+          salesman: body.salesman,
+          route: body.route,
+          requisitionRef: body.requisitionRef,
+          notes: body.notes,
+          createdAt: new Date().toISOString(),
+          lines: body.lines.map(({ target: _t, ...l }) => ({ ...l, variance: l.physicalStock - l.systemStock })),
+        });
+        const [y, m, d] = body.date.split("-").map(Number);
+        return send({
+          docNo,
+          day: `${m}/${d}/${y}`,
+          despatched: body.lines
+            .filter((l) => l.target && l.stockTransfer > 0)
+            .map((l) => ({ item: l.target!.item, added: l.stockTransfer, despatch: l.stockTransfer })),
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), devDailyApi()],
+  plugins: [react(), tailwindcss(), devDailyApi(), devTransfersApi()],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

@@ -1,6 +1,6 @@
 import { fmt, shortDate } from "./api";
 import { orderDue, shortfall, stockSignal } from "./insights";
-import type { DailyData } from "./types";
+import type { DailyData, Transfer } from "./types";
 
 const NAVY: [number, number, number] = [32, 35, 87];
 const ORANGE: [number, number, number] = [245, 166, 35];
@@ -21,6 +21,32 @@ async function logoDataUrl(): Promise<string | null> {
   }
 }
 
+const generatedAt = () =>
+  new Date().toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+type Doc = import("jspdf").jsPDF;
+
+/** Navy band with the logo on the left, the title and two lines on the right, an orange rule under it. */
+function drawHeader(doc: Doc, logo: string | null, title: string, lines: [string, string]) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 10;
+  doc.setFillColor(...NAVY);
+  doc.rect(0, 0, pageWidth, 30, "F");
+  if (logo) doc.addImage(logo, "PNG", margin, 4, 39, 22);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text(title, pageWidth - margin, 12, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text(lines[0], pageWidth - margin, 18.5, { align: "right" });
+  doc.text(lines[1], pageWidth - margin, 24, { align: "right" });
+  doc.setDrawColor(...ORANGE);
+  doc.setLineWidth(0.8);
+  doc.line(0, 30, pageWidth, 30);
+  doc.setTextColor(30, 30, 30);
+}
+
 /** The day as saved in the sheet, as an A4 PDF: alerts first, then every item by section. */
 export async function exportDayPdf(data: DailyData): Promise<void> {
   // Loaded on demand: the PDF library is larger than the rest of the app together.
@@ -29,33 +55,10 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 10;
 
-  // Header band with the logo.
-  doc.setFillColor(...NAVY);
-  doc.rect(0, 0, pageWidth, 30, "F");
-  const logo = await logoDataUrl();
-  if (logo) doc.addImage(logo, "PNG", margin, 4, 39, 22);
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
-  doc.text("Store Update - Finished Goods", pageWidth - margin, 12, { align: "right" });
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.text(`ARS International Co SPC  |  Day ${data.tab}`, pageWidth - margin, 18.5, { align: "right" });
-  doc.text(
-    `Absentees: ${data.absentees || "none"}  |  Generated ${new Date().toLocaleString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })}`,
-    pageWidth - margin,
-    24,
-    { align: "right" },
-  );
-  doc.setDrawColor(...ORANGE);
-  doc.setLineWidth(0.8);
-  doc.line(0, 30, pageWidth, 30);
+  drawHeader(doc, await logoDataUrl(), "Store Update - Finished Goods", [
+    `ARS International Co SPC  |  Day ${data.tab}`,
+    `Absentees: ${data.absentees || "none"}  |  Generated ${generatedAt()}`,
+  ]);
 
   let y = 37;
   doc.setTextColor(30, 30, 30);
@@ -204,4 +207,68 @@ export async function exportDayPdf(data: DailyData): Promise<void> {
   const [m, d, yy] = data.tab.split("/");
   const stamp = yy && m && d ? `${yy}-${m.padStart(2, "0")}-${d.padStart(2, "0")}` : "day";
   doc.save(`store-update-${stamp}.pdf`);
+}
+
+/** One stock transfer to a salesman, as an A4 PDF to hand over or file. */
+export async function exportTransferPdf(t: Transfer): Promise<void> {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 10;
+  drawHeader(doc, await logoDataUrl(), `Stock Transfer ${t.docNo}`, [
+    `ARS International Co SPC  |  ${shortDate(t.date)} ${t.date.slice(0, 4)}`,
+    `${t.salesman || "-"}  |  ${t.route || "-"}${t.requisitionRef ? `  |  Requisition ${t.requisitionRef}` : ""}`,
+  ]);
+
+  const sum = (k: "stockTransfer" | "physicalStock" | "systemStock" | "piecesReimbursed" | "variance") =>
+    t.lines.reduce((n, l) => n + l[k], 0);
+  autoTable(doc, {
+    startY: 38,
+    margin: { left: margin, right: margin },
+    head: [["Code", "Item", "Unit", "Transfer", "Physical", "System", "Reimbursed", "Variance"]],
+    body: t.lines.map((l) => [
+      l.code,
+      l.name,
+      l.unit,
+      fmt(l.stockTransfer),
+      fmt(l.physicalStock),
+      fmt(l.systemStock),
+      fmt(l.piecesReimbursed),
+      fmt(l.variance),
+    ]),
+    foot: [
+      [
+        "",
+        "Total",
+        "",
+        ...(["stockTransfer", "physicalStock", "systemStock", "piecesReimbursed", "variance"] as const).map((k) => ({
+          content: fmt(sum(k)),
+          styles: { halign: "right" as const },
+        })),
+      ],
+    ],
+    styles: { fontSize: 8.5, cellPadding: 1.6 },
+    headStyles: { fillColor: NAVY },
+    footStyles: { fillColor: [232, 233, 243], textColor: [30, 30, 30], fontStyle: "bold" },
+    columnStyles: { 1: { cellWidth: 70 }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } },
+  });
+
+  let y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  if (t.notes) {
+    doc.text(`Notes: ${t.notes}`, margin, y);
+    y += 8;
+  }
+  doc.text("Variance = Physical - System.", margin, y);
+  y += 22;
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.3);
+  const w = (pageWidth - margin * 2 - 20) / 2;
+  doc.line(margin, y, margin + w, y);
+  doc.line(pageWidth - margin - w, y, pageWidth - margin, y);
+  doc.text("Store keeper", margin, y + 5);
+  doc.text(`Salesman${t.salesman ? ` (${t.salesman})` : ""}`, pageWidth - margin - w, y + 5);
+
+  doc.save(`${t.docNo || "transfer"}.pdf`);
 }

@@ -24,6 +24,7 @@ import {
   shortDate,
 } from "./api";
 import { DUE_SOON_DAYS, orderDue, shortfall, stockSignal, type Due } from "./insights";
+import { Transfers } from "./Transfers";
 import type { DailyData, DailyRow, DailyWrite, NewItem, OrderEdit } from "./types";
 
 type OrderForm = { qty: string; deliverBy: string; status: string };
@@ -113,6 +114,7 @@ export function App() {
   const [sheet, setSheet] = useState<"order" | "item" | null>(null);
   const [exporting, setExporting] = useState(false);
   const [openOrderKey, setOpenOrderKey] = useState<string | null>(null);
+  const [view, setView] = useState<"daily" | "transfers">("daily");
 
   // Only the latest read may land, so a slow answer for another day can't replace this one.
   const request = useRef(0);
@@ -299,6 +301,35 @@ export function App() {
         </div>
       </header>
       <div className="h-1 bg-brand-accent" />
+      {ready ? (
+        <div className="mx-auto max-w-2xl px-4 pt-3">
+          <div className="grid grid-cols-2 rounded-xl border border-border bg-card p-1">
+            {(
+              [
+                ["daily", "Daily entry"],
+                ["transfers", "Transfers"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => {
+                  // Leaving the day with unsaved numbers would hide them behind the other screen.
+                  if (value === "transfers" && dirty) {
+                    setSaveError("Save or discard the day's changes before switching to Transfers.");
+                    return;
+                  }
+                  setView(value);
+                }}
+                className={`rounded-lg py-2 text-sm font-medium ${
+                  view === value ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <main className="mx-auto max-w-2xl px-4 pt-4">
         {!data && loading ? (
@@ -309,6 +340,8 @@ export function App() {
           <Notice message="Not connected to the sheet yet. Set ENTRY_SCRIPT_URL and ENTRY_SCRIPT_SECRET on Netlify (see the README)." />
         ) : data?.error ? (
           <Notice message={data.error} action={() => void load(activeTab)} />
+        ) : ready && view === "transfers" ? (
+          <Transfers dayRows={rows} dayTab={activeTab} onDespatched={() => void load(activeTab)} />
         ) : ready ? (
           <>
             {loadError ? <Notice message={loadError} action={() => void load(activeTab)} /> : null}
@@ -500,7 +533,7 @@ export function App() {
         ) : null}
       </main>
 
-      {sheet === "order" && ready ? (
+      {sheet === "order" && ready && view === "daily" ? (
         <NewOrderSheet
           rows={rows}
           statuses={statuses}
@@ -530,7 +563,7 @@ export function App() {
         />
       ) : null}
 
-      {dirty || saved || saveError || changes.problem ? (
+      {view === "daily" && (dirty || saved || saveError || changes.problem) ? (
         <div className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 pt-3 backdrop-blur">
           <div className="mx-auto max-w-2xl">
             {changes.problem || saveError ? (
