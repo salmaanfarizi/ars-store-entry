@@ -9,8 +9,9 @@
  * the sheet, so the sheet's own menus, Next Day and alert scripts are left alone.
  *
  * Setup, once:
- *   1. Paste this file into a new Apps Script project and set SECRET below to a long random
- *      value.
+ *   1. Paste this file into a new Apps Script project. In Project Settings → Script Properties
+ *      add SECRET with a long random value. Keep it there, never in this file: the repository
+ *      is shared, and the site's build refuses to deploy a secret it finds in the code.
  *   2. Run `setup` once from the editor and allow access when Google asks. The log shows the
  *      tab and the columns it found.
  *   3. Deploy → New deployment → Web app. Execute as: Me. Who has access: Anyone. Copy the
@@ -21,7 +22,6 @@
  */
 
 const SHEET_ID = '1l1YuOxJ5W-lWxD-xgC2ZlfatNxDN4HuVAbaf4SL4vxU';
-const SECRET = '2031106194';
 
 /** Day tabs are named by date (10/15/2026); "today" is decided in Saudi time. */
 const TIME_ZONE = 'Asia/Riyadh';
@@ -89,11 +89,15 @@ function respond_(fn) {
   );
 }
 
+/** The shared secret, from Script Properties (Project Settings → Script Properties → SECRET). */
+function secret_() {
+  return String(PropertiesService.getScriptProperties().getProperty('SECRET') || '').trim();
+}
+
 function checkSecret_(given) {
-  if (!SECRET || SECRET === 'PASTE_SECRET_HERE') {
-    throw new Error('The entry script has no SECRET set yet.');
-  }
-  if (given !== SECRET) throw new Error('unauthorized');
+  const secret = secret_();
+  if (!secret) throw new Error('The entry script has no SECRET in its Script Properties yet.');
+  if (given !== secret) throw new Error('unauthorized');
 }
 
 function required_(value, label) {
@@ -654,7 +658,7 @@ function addItem_(sheet, spec) {
 
 /** Run once from the editor: checks it can read the sheet and shows what it found. */
 function setup() {
-  checkSecret_(SECRET);
+  checkSecret_(secret_());
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const tab = latestTabUpToToday_(ss);
   const layout = readLayout_(tab.sheet);

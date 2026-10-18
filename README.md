@@ -42,9 +42,11 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
 
 ## Setting it up
 
-1. **Apps Script.** script.google.com → New project, paste `apps-script/entry.gs`, set
-   `SECRET` to a long random value. Run **setup** once and allow access; the log lists the
-   tab, every column it found and the absentees cell.
+1. **Apps Script.** script.google.com → New project, paste `apps-script/entry.gs`. In
+   **Project Settings → Script Properties** add `SECRET` with a long random value. It must
+   never go in the file itself: this repository is shared, and Netlify's secret scan fails
+   the build when it finds the value in the code. Run **setup** once and allow access; the
+   log lists the tab, every column it found and the absentees cell.
 2. **Deploy → New deployment → Web app**, execute as **Me**, access **Anyone**. Copy the URL.
 3. **Netlify.** Import this repo as a new site (build `npm run build`, publish `dist`; both
    come from `netlify.toml`). Under Environment variables, with the Functions scope, set:
@@ -52,7 +54,7 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
    | Variable | Value |
    | --- | --- |
    | `ENTRY_SCRIPT_URL` | the web app URL (…/exec) |
-   | `ENTRY_SCRIPT_SECRET` | the same value as `SECRET` in the script |
+   | `ENTRY_SCRIPT_SECRET` | the same value as the script's `SECRET` property |
    | `APP_PASSCODE` | the team passcode people type once per phone |
 
    Then redeploy. Until the first two are set the app says it isn't connected.
