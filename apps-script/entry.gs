@@ -9,8 +9,9 @@
  * the sheet, so the sheet's own menus, Next Day and alert scripts are left alone.
  *
  * Setup, once:
- *   1. Paste this file into a new Apps Script project and set SECRET below to a long random
- *      value.
+ *   1. Paste this file into a new Apps Script project. In Project Settings → Script Properties
+ *      add SECRET with a long random value. Keep it there, never in this file: the repository
+ *      is shared, and the site's build refuses to deploy a secret it finds in the code.
  *   2. Run `setup` once from the editor and allow access when Google asks. The log shows the
  *      tab and the columns it found.
  *   3. Deploy → New deployment → Web app. Execute as: Me. Who has access: Anyone. Copy the
@@ -21,7 +22,6 @@
  */
 
 const SHEET_ID = '1l1YuOxJ5W-lWxD-xgC2ZlfatNxDN4HuVAbaf4SL4vxU';
-const SECRET = 'PASTE_SECRET_HERE';
 
 /** Day tabs are named by date (10/15/2026); "today" is decided in Saudi time. */
 const TIME_ZONE = 'Asia/Riyadh';
@@ -34,6 +34,8 @@ const HEADERS = {
   order: 'Specific Order',
   deliverBy: 'Deliver By',
   status: 'Order Status',
+  mini: 'Mini Level',
+  required: 'Required Qty',
 };
 
 /** The cell above the absentees entry; its value sits just right of the label's merged cells. */
@@ -44,6 +46,12 @@ const DEFAULT_STATUSES = ['PENDING', 'MET'];
 
 /** How many recent day tabs the app offers for back-filling. */
 const PICKABLE_TABS = 8;
+
+/** Despatch history read for each item, to tell fast movers from slow ones. */
+const HISTORY_TABS = 14;
+
+/** Past day tabs barely change, so their despatch figures are cached this long (seconds). */
+const HISTORY_CACHE_SECONDS = 6 * 60 * 60;
 
 /* ------------------------------- web app ------------------------------- */
 
@@ -81,11 +89,15 @@ function respond_(fn) {
   );
 }
 
+/** The shared secret, from Script Properties (Project Settings → Script Properties → SECRET). */
+function secret_() {
+  return String(PropertiesService.getScriptProperties().getProperty('SECRET') || '').trim();
+}
+
 function checkSecret_(given) {
-  if (!SECRET || SECRET === 'PASTE_SECRET_HERE') {
-    throw new Error('The entry script has no SECRET set yet.');
-  }
-  if (given !== SECRET) throw new Error('unauthorized');
+  const secret = secret_();
+  if (!secret) throw new Error('The entry script has no SECRET in its Script Properties yet.');
+  if (given !== secret) throw new Error('unauthorized');
 }
 
 function required_(value, label) {
@@ -213,6 +225,7 @@ function readLayout_(sheet) {
       production: num_(cell(r, cols.production)),
       despatch: num_(cell(r, cols.despatch)),
       closing: num_(cell(r, cols.closing)),
+      mini: num_(cell(r, cols.mini)),
       orderText: cell(r, cols.order),
       deliverBy: cols.deliverBy >= 0 ? isoDate_(raw[i][cols.deliverBy]) : '',
       status: cell(r, cols.status),
@@ -302,6 +315,7 @@ function readDaily_(ss, wantedTab) {
   const tab = hit || latestTabUpToToday_(ss);
   const layout = readLayout_(tab.sheet);
   const cell = absenteesCell_(tab.sheet);
+  const history = despatchHistory_(ss, tab, layout);
   return {
     ok: true,
     tab: tab.name,
@@ -320,12 +334,77 @@ function readDaily_(ss, wantedTab) {
         production: x.production,
         despatch: x.despatch,
         closing: x.closing,
+        mini: x.mini,
+        movement: history.movement(x),
         order: hasOrder
           ? { qty: num_(x.orderText), text: x.orderText, deliverBy: x.deliverBy, status: x.status }
           : null,
       };
     }),
   };
+}
+
+/** Section + code + item as one string, the way the app tells items apart. */
+function itemKey_(x) {
+  return norm_(x.section) + '|' + norm_(x.code) + '|' + norm_(x.item);
+}
+
+/**
+ * Despatch over the last HISTORY_TABS day tabs up to and including `tab`: on how many days
+ * each item went out, and how much in total. Past tabs come from the script cache.
+ */
+function despatchHistory_(ss, tab, layout) {
+  const today = todayTime_();
+  const tabs = datedTabs_(ss)
+    .filter(function (t) {
+      return t.t <= tab.t;
+    })
+    .slice(-HISTORY_TABS);
+  const cache = CacheService.getScriptCache();
+  const perTab = tabs.map(function (t) {
+    if (t.name === tab.name) return despatchMap_(layout);
+    const key = 'despatch:' + t.name;
+    const cached = t.t < today ? cache.get(key) : null;
+    if (cached) return JSON.parse(cached);
+    let map = {};
+    try {
+      map = despatchMap_(readLayout_(t.sheet));
+    } catch (err) {
+      map = {}; // an odd old tab shouldn't stop today's entry
+    }
+    if (t.t < today) {
+      try {
+        cache.put(key, JSON.stringify(map), HISTORY_CACHE_SECONDS);
+      } catch (err) {
+        /* too large to cache; read again next time */
+      }
+    }
+    return map;
+  });
+
+  return {
+    movement: function (x) {
+      const k = itemKey_(x);
+      let active = 0;
+      let total = 0;
+      perTab.forEach(function (m) {
+        const v = m[k];
+        if (v > 0) {
+          active++;
+          total += v;
+        }
+      });
+      return { days: perTab.length, active: active, total: total };
+    },
+  };
+}
+
+function despatchMap_(layout) {
+  const map = {};
+  layout.items.forEach(function (x) {
+    if (x.despatch) map[itemKey_(x)] = x.despatch;
+  });
+  return map;
 }
 
 /* -------------------------------- writing -------------------------------- */
@@ -405,6 +484,10 @@ function writeDaily_(body) {
     if (entry.order !== undefined) planOrder_(entry.order, want, tabs.slice(start), layoutOf, statuses, ss, plan);
   });
 
+  const newItems = (body.newItems || []).map(function (spec) {
+    return checkNewItem_(spec, layout, name);
+  });
+
   let absenteesCell = null;
   if (body.absentees !== undefined) {
     absenteesCell = absenteesCell_(tab.sheet);
@@ -419,8 +502,17 @@ function writeDaily_(body) {
     if (text) absenteesCell.setNumberFormat('@').setValue(text);
     else absenteesCell.clearContent();
   }
+  // Inserting rows moves everything below, so it comes after every other write.
+  newItems.forEach(function (spec) {
+    addItem_(tab.sheet, spec);
+  });
   SpreadsheetApp.flush();
-  return { ok: true, tab: name, cells: plan.length + (absenteesCell ? 1 : 0) };
+  return {
+    ok: true,
+    tab: name,
+    cells: plan.length + (absenteesCell ? 1 : 0) + newItems.length,
+    added: newItems.length,
+  };
 }
 
 /** Adds the writes for one item's order (set or clear) on the chosen tab and later ones. */
@@ -476,11 +568,97 @@ function planOrder_(order, want, targets, layoutOf, statuses, ss, plan) {
   });
 }
 
+/* ------------------------------- new items ------------------------------- */
+
+function checkNewItem_(spec, layout, tabName) {
+  const want = {
+    section: required_(spec.section, 'section for the new item'),
+    code: String(spec.code == null ? '' : spec.code).trim(),
+    item: required_(spec.item, 'item name'),
+  };
+  const inSection = layout.items.filter(function (x) {
+    return norm_(x.section) === norm_(want.section);
+  });
+  if (!inSection.length) throw new Error('There is no "' + want.section + '" section on the ' + tabName + ' tab.');
+  const same = inSection.filter(function (x) {
+    return norm_(x.code) === norm_(want.code) && norm_(x.item) === norm_(want.item);
+  });
+  if (same.length) throw new Error('"' + want.item + '" is already in ' + want.section + '.');
+  const opening = Number(spec.opening == null ? 0 : spec.opening);
+  if (!isFinite(opening) || opening < 0) throw new Error('"' + want.item + '": opening stock must be zero or more.');
+  let mini = null;
+  if (spec.mini != null && spec.mini !== '') {
+    mini = Number(spec.mini);
+    if (!isFinite(mini) || mini < 0) throw new Error('"' + want.item + '": minimum level must be zero or more.');
+  }
+  ['opening', 'production', 'despatch', 'closing'].forEach(function (key) {
+    colOrThrow_(layout, key, tabName);
+  });
+  return { section: want.section, code: want.code, item: want.item, opening: opening, mini: mini };
+}
+
+function colLetter_(i) {
+  let n = i + 1;
+  let out = '';
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    out = String.fromCharCode(65 + m) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+/**
+ * Adds an item as a new row at the end of its section, formatted like the row above it,
+ * with the same Closing and Required Qty formulas the sheet uses. Opening is typed in, since
+ * there is no row for it on the previous day. Items are then renumbered 1, 2, 3… as before.
+ */
+function addItem_(sheet, spec) {
+  const layout = readLayout_(sheet);
+  const c = layout.cols;
+  const inSection = layout.items.filter(function (x) {
+    return norm_(x.section) === norm_(spec.section);
+  });
+  const above = inSection[inSection.length - 1].row;
+  const r = above + 1;
+  sheet.insertRowAfter(above);
+
+  const width = sheet.getLastColumn();
+  const source = sheet.getRange(above, 1, 1, width);
+  const target = sheet.getRange(r, 1, 1, width);
+  source.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  source.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+
+  const L = function (key) {
+    return colLetter_(c[key]) + r;
+  };
+  sheet.getRange(r, 2).setValue(spec.code);
+  sheet.getRange(r, 3).setValue(spec.item);
+  sheet.getRange(r, c.opening + 1).setValue(spec.opening);
+  sheet.getRange(r, c.closing + 1).setFormula('=' + L('opening') + '+' + L('production') + '-' + L('despatch'));
+  if (c.mini >= 0 && spec.mini != null) sheet.getRange(r, c.mini + 1).setValue(spec.mini);
+  if (c.required >= 0 && c.mini >= 0) {
+    sheet
+      .getRange(r, c.required + 1)
+      .setFormula('=IF($' + L('mini') + '="","",' + L('mini') + '-' + L('closing') + ')');
+  }
+  const note = 'Added from Store Entry · ' + Utilities.formatDate(new Date(), TIME_ZONE, 'd MMM yyyy, HH:mm');
+  sheet.getRange(r, 3).setNote(note);
+
+  // Renumber every item row, so the No column keeps counting 1, 2, 3… down the tab.
+  sheet.getRange(r, 1).setValue(0);
+  SpreadsheetApp.flush();
+  readLayout_(sheet).items.forEach(function (x, i) {
+    const cell = sheet.getRange(x.row, 1);
+    if (Number(cell.getValue()) !== i + 1) cell.setValue(i + 1);
+  });
+}
+
 /* -------------------------------- setup -------------------------------- */
 
 /** Run once from the editor: checks it can read the sheet and shows what it found. */
 function setup() {
-  checkSecret_(SECRET);
+  checkSecret_(secret_());
   const ss = SpreadsheetApp.openById(SHEET_ID);
   const tab = latestTabUpToToday_(ss);
   const layout = readLayout_(tab.sheet);

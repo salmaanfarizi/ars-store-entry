@@ -3,7 +3,7 @@
  * Apps Script web app in apps-script/entry.gs, which is protected by a shared secret.
  *
  *   ENTRY_SCRIPT_URL     the Apps Script web app URL (…/exec)
- *   ENTRY_SCRIPT_SECRET  the same value as SECRET in entry.gs
+ *   ENTRY_SCRIPT_SECRET  the same value as the SECRET Script Property of entry.gs
  *   APP_PASSCODE         the team passcode
  */
 
@@ -62,7 +62,7 @@ export async function callScript(
     if (!reply.ok) {
       throw new Error(
         reply.error === "unauthorized"
-          ? "The entry script rejected the site's secret — ENTRY_SCRIPT_SECRET must match SECRET in the script."
+          ? "The entry script rejected the site's secret — ENTRY_SCRIPT_SECRET must match the SECRET Script Property."
           : (reply.error ?? "The sheet refused the change."),
       );
     }

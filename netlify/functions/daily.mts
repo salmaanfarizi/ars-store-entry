@@ -1,5 +1,5 @@
 import type { Config } from "@netlify/functions";
-import type { DailyData, DailyWrite, OrderEdit } from "../../src/types";
+import type { DailyData, DailyWrite, NewItem, OrderEdit } from "../../src/types";
 import { authorize, callScript, json, scriptConfigured, text } from "../lib/script";
 
 /**
@@ -29,6 +29,26 @@ function parseOrder(raw: unknown): OrderEdit | string {
   const status = text(o.status, 60);
   if (!status) return "Pick an order status.";
   return { action: "set", qty, deliverBy: o.deliverBy, status };
+}
+
+function parseNewItem(raw: unknown): NewItem | string {
+  const n = (raw ?? {}) as Record<string, unknown>;
+  const item: NewItem = {
+    section: text(n.section),
+    code: text(n.code, 40),
+    item: text(n.item),
+    opening: 0,
+    mini: null,
+  };
+  if (!item.section) return "Pick the section for the new item.";
+  if (!item.item) return "Give the new item a name.";
+  const opening = quantity(n.opening ?? 0);
+  if (opening === "bad" || opening === undefined) return `"${item.item}": opening stock must be zero or more.`;
+  item.opening = opening ?? 0;
+  const mini = quantity(n.mini ?? null);
+  if (mini === "bad") return `"${item.item}": minimum level must be zero or more.`;
+  item.mini = mini ?? null;
+  return item;
 }
 
 /** Accepts only the fields the script needs, so nothing else reaches the sheet. */
@@ -68,7 +88,17 @@ function parseWrite(body: unknown): DailyWrite | string {
 
   const write: DailyWrite = { tab, entries };
   if (b.absentees !== undefined) write.absentees = text(b.absentees, 60);
-  if (entries.length === 0 && write.absentees === undefined) return "Nothing to save.";
+  if (Array.isArray(b.newItems) && b.newItems.length) {
+    if (b.newItems.length > 20) return "Too many new items in one save.";
+    const items: NewItem[] = [];
+    for (const raw of b.newItems) {
+      const parsed = parseNewItem(raw);
+      if (typeof parsed === "string") return parsed;
+      items.push(parsed);
+    }
+    write.newItems = items;
+  }
+  if (entries.length === 0 && write.absentees === undefined && !write.newItems) return "Nothing to save.";
   return write;
 }
 
