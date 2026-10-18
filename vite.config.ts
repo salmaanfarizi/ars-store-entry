@@ -132,6 +132,15 @@ function devTransfersApi(): Plugin {
       notes: "",
       lines: [{ code: "4401", name: "100 Grams Sunflower Seeds (12 Pieces × 5 Bags)", unit: "Bundle", quantity: 10 }],
     },
+    {
+      // Old and never transferred: hidden behind "Show older".
+      docNo: "REQ-2026-0201",
+      date: "2026-07-29",
+      salesman: "Ashik",
+      route: "Al ahsa 2",
+      notes: "",
+      lines: [{ code: "4402", name: "200 Grams Sunflower Seeds (10 Pieces × 5 Bags)", unit: "Bundle", quantity: 2 }],
+    },
   ];
   const data = (): TransferData => ({
     configured: true,
@@ -169,6 +178,7 @@ function devTransfersApi(): Plugin {
         const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as TransferWrite;
         const docNo = `TRF-2026-${String(transfers.length + 101).padStart(4, "0")}`;
         transfers.unshift({
+          kind: body.kind ?? "route",
           docNo,
           date: body.date,
           salesman: body.salesman,

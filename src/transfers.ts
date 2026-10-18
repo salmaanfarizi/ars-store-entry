@@ -41,8 +41,10 @@ function likeness(a: string, b: string): number {
   return both / Math.max(1, A.size + B.size - both);
 }
 
+export type Region = "riyadh" | "qatar" | "regular";
+
 /** The store section a route's stock normally comes from. */
-function regionOf(route: string): "riyadh" | "qatar" | "regular" {
+export function regionOf(route: string): Region {
   const r = route.toLowerCase();
   if (/qatar|doha/.test(r)) return "qatar";
   if (/riyadh|ryadh|kharj|qaseem|qassim/.test(r)) return "riyadh";
@@ -65,10 +67,9 @@ export function storeCandidates(rows: DailyRow[], code: string): DailyRow[] {
  * (1126 is two different 10kg bags), then the section that serves the route's region
  * (4402 is in both Regular and Riyadh). Null when the store sheet has no such code.
  */
-export function suggestTarget(rows: DailyRow[], code: string, name: string, route: string): StoreTarget | null {
+export function suggestTarget(rows: DailyRow[], code: string, name: string, region: Region): StoreTarget | null {
   const candidates = storeCandidates(rows, code);
   if (!candidates.length) return null;
-  const region = regionOf(route);
   let best = candidates[0]!;
   let bestScore = -1;
   for (const r of candidates) {
@@ -100,3 +101,24 @@ export function isoToTab(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   return y && m && d ? `${m}/${d}/${y}` : iso;
 }
+
+/** The store row a target points at, for its closing stock. */
+export function storeRow(rows: DailyRow[], target: StoreTarget | null): DailyRow | null {
+  if (!target) return null;
+  return rows.find((r) => targetKey(r) === targetKey(target)) ?? null;
+}
+
+/* ------------------------------ transfer kinds ----------------------------- */
+
+export type TransferKind = "route" | "direct" | "warehouse";
+export const WAREHOUSES = ["Riyadh", "Dammam"] as const;
+export type Warehouse = (typeof WAREHOUSES)[number];
+
+export const KIND_LABEL: Record<TransferKind, string> = {
+  route: "Salesman route",
+  direct: "Direct sale",
+  warehouse: "Regional warehouse",
+};
+
+/** Riyadh's warehouse is stocked from the Riyadh section; Dammam from the regular ones. */
+export const warehouseRegion = (w: Warehouse): Region => (w === "Riyadh" ? "riyadh" : "regular");

@@ -32,7 +32,12 @@ const TRANSFER_HEADER = [
   'item_code', 'item_name', 'unit',
   'stock_transfer', 'physical_stock', 'system_stock', 'pieces_reimbursed', 'variance',
   'notes', 'created_at',
+  // Added after the old app: route (salesman), direct (sale to a customer) or warehouse
+  // (regional warehouse transfer). Rows from before it are routes.
+  'transfer_type',
 ];
+
+const TRANSFER_KINDS = ['route', 'direct', 'warehouse'];
 
 const TRANSFER_UNITS = ['Bag', 'Bundle', 'Box', 'Carton'];
 
@@ -754,6 +759,7 @@ function readTransfers_() {
     if (r[4]) used[String(r[4]).trim()] = doc;
     if (!transfers[doc]) {
       transfers[doc] = {
+        kind: TRANSFER_KINDS.indexOf(String(r[15] || '').trim()) >= 0 ? String(r[15]).trim() : 'route',
         docNo: doc,
         date: isoOf_(r[1]),
         salesman: String(r[2] || ''),
@@ -857,6 +863,7 @@ function writeTransfer_(body) {
   if (!route && !salesman) throw new Error('Pick the route or salesman.');
   const ref = String(body.requisitionRef || '').trim();
   const notes = String(body.notes || '').trim().slice(0, 300);
+  const kind = TRANSFER_KINDS.indexOf(body.kind) >= 0 ? body.kind : 'route';
 
   const trfSheet = reqSheet_('Transfers');
   const existing = rowsOf_(trfSheet);
@@ -927,18 +934,21 @@ function writeTransfer_(body) {
       docNo, date, salesman, route, ref,
       l.code, l.name, l.unit,
       l.stockTransfer, l.physicalStock, l.systemStock, l.piecesReimbursed, l.physicalStock - l.systemStock,
-      notes, createdAt,
+      notes, createdAt, kind,
     ];
   });
 
+  // A new tab gets the whole header; an old one gains the transfer_type column once.
   if (!existing.length) {
     trfSheet.getRange(1, 1, 1, TRANSFER_HEADER.length).setValues([TRANSFER_HEADER]);
+  } else if (String(existing[0][15] || '').trim() !== 'transfer_type') {
+    trfSheet.getRange(1, 16).setValue('transfer_type');
   }
   const start = trfSheet.getLastRow() + 1;
   const block = trfSheet.getRange(start, 1, rows.length, TRANSFER_HEADER.length);
   // Text columns stay text (no date or number guessing), as the old app's RAW writes left them.
   trfSheet.getRange(start, 1, rows.length, 8).setNumberFormat('@');
-  trfSheet.getRange(start, 14, rows.length, 2).setNumberFormat('@');
+  trfSheet.getRange(start, 14, rows.length, 3).setNumberFormat('@');
   block.setValues(rows);
 
   plan.forEach(function (p) {

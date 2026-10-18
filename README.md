@@ -56,7 +56,15 @@ from salesreq.abusalim.sa.
   code, then the closest name (1126 is two different bags), then the section for the route's
   region (Riyadh / Kharj / Qaseem routes → the Riyadh section). It can be changed per line or
   set to *Don't add*; codes the store sheet doesn't have can't be added.
-- **PDF** of each transfer with the logo and signature lines.
+- **Three kinds of transfer.** *Salesman route* (with or without a requisition), *Direct sale*
+  (a customer name instead of a route) and *Regional warehouse* (Riyadh or Dammam). The Riyadh
+  warehouse draws on the Riyadh section, Dammam and direct sales on the regular ones. Sales and
+  warehouse transfers only ask for the quantity. The kind is saved in a 16th column,
+  `transfer_type`, added to the Transfers tab the first time it's needed; older rows count as
+  routes. The sheet's route column reads "Direct sale" / "Riyadh warehouse".
+- **Add an item** opens a searchable list grouped by product, with code and unit tags and the
+  store's closing stock for that transfer's section.
+- **PDF** of each transfer with the logo and signature lines, titled by kind.
 
 Retire the old transfer app once this is live, so two apps don't number transfers at once.
 

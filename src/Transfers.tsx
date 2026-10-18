@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, Check, ChevronDown, ChevronUp, FileDown, Plus, RefreshCw, Trash2, Truck, X } from "lucide-react";
 import { fmt, getPasscode, PasscodeError, savePasscode, shortDate } from "./api";
+import { ItemPicker } from "./ItemPicker";
 import {
   isoToTab,
+  KIND_LABEL,
   loadTransfers,
+  regionOf,
   saveTransfer,
   sectionShort,
   storeCandidates,
+  storeRow,
   suggestTarget,
   tabToIso,
   targetKey,
+  WAREHOUSES,
+  warehouseRegion,
+  type Region,
+  type TransferKind,
+  type Warehouse,
 } from "./transfers";
 import type { DailyRow, Requisition, StoreTarget, Transfer, TransferData, TransferResult } from "./types";
 
@@ -35,13 +44,56 @@ type Line = {
 };
 
 type Draft = {
+  kind: TransferKind;
   requisitionRef: string;
   date: string;
+  /** kind "route": the salesman's route and name. */
   route: string;
   salesman: string;
+  /** kind "direct": who bought it. */
+  customer: string;
+  /** kind "warehouse": where it went. */
+  warehouse: Warehouse;
   notes: string;
   lines: Line[];
 };
+
+/** The store section a draft draws on: Riyadh for Riyadh routes and the Riyadh warehouse. */
+const regionOfDraft = (d: Pick<Draft, "kind" | "route" | "warehouse">): Region =>
+  d.kind === "warehouse" ? warehouseRegion(d.warehouse) : d.kind === "direct" ? "regular" : regionOf(d.route);
+
+/** What goes in the sheet's route and salesman columns for each kind of transfer. */
+function destination(d: Draft): { route: string; salesman: string } {
+  if (d.kind === "direct") return { route: "Direct sale", salesman: d.customer.trim() };
+  if (d.kind === "warehouse") return { route: `${d.warehouse} warehouse`, salesman: `${d.warehouse} warehouse` };
+  return { route: d.route, salesman: d.salesman };
+}
+
+const KIND_CLASS: Record<TransferKind, string> = {
+  route: "bg-primary/10 text-primary",
+  direct: "bg-accent/25 text-accent-foreground",
+  warehouse: "bg-success/12 text-success",
+};
+
+export function KindBadge({ kind }: { kind: TransferKind }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-wide ${KIND_CLASS[kind]}`}>
+      {kind === "route" ? "Route" : kind === "direct" ? "Direct sale" : "Warehouse"}
+    </span>
+  );
+}
+
+/** Open requisitions older than this many days are hidden: they were dealt with some other way. */
+const OPEN_REQUISITION_DAYS = 2;
+
+/** Whole days since a yyyy-mm-dd date; negative for a date ahead (a requisition for tomorrow). */
+function daysAgo(iso: string): number | null {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today.getTime() - new Date(y, m - 1, d).getTime()) / 86_400_000);
+}
 
 let nextId = 1;
 const n = (s: string) => {
@@ -69,6 +121,7 @@ export function Transfers({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [done, setDone] = useState<{ result: TransferResult; transfer: Transfer } | null>(null);
+  const [showOlder, setShowOlder] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,7 +145,7 @@ export function Transfers({
     return m;
   }, [data]);
 
-  const lineFor = (code: string, name: string, unit: string, route: string, requested: number | null): Line => ({
+  const lineFor = (code: string, name: string, unit: string, region: Region, requested: number | null): Line => ({
     id: nextId++,
     code,
     name,
@@ -103,18 +156,21 @@ export function Transfers({
     physicalStock: "",
     systemStock: "",
     piecesReimbursed: "",
-    target: suggestTarget(dayRows, code, name, route),
+    target: suggestTarget(dayRows, code, name, region),
   });
 
   const start = (req: Requisition | null) => {
     setDone(null);
     setDraft({
+      kind: "route",
       requisitionRef: req?.docNo ?? "",
       date: tabToIso(dayTab) || new Date().toISOString().slice(0, 10),
       route: req?.route ?? "",
       salesman: req?.salesman ?? "",
+      customer: "",
+      warehouse: "Riyadh",
       notes: "",
-      lines: req ? req.lines.map((l) => lineFor(l.code, l.name, l.unit, req.route, l.quantity)) : [],
+      lines: req ? req.lines.map((l) => lineFor(l.code, l.name, l.unit, regionOf(req.route), l.quantity)) : [],
     });
   };
 
@@ -156,11 +212,20 @@ export function Transfers({
     );
   }
 
+  // Recent ones only: today, the last two days, and any dated ahead. A requisition with an
+  // unreadable date stays listed rather than vanish.
+  const recent = data.requisitions.filter((r) => {
+    const age = daysAgo(r.date);
+    return age === null || age <= OPEN_REQUISITION_DAYS;
+  });
+  const older = data.requisitions.length - recent.length;
+  const listed = showOlder ? data.requisitions : recent;
+
   return (
     <>
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Open requisitions ({data.requisitions.length})
+          Open requisitions ({listed.length})
         </h2>
         <button
           onClick={() => void load()}
@@ -172,10 +237,12 @@ export function Transfers({
         </button>
       </div>
       <div className="card-surface mt-2 divide-y divide-border">
-        {data.requisitions.length === 0 ? (
-          <p className="p-4 text-center text-sm text-muted-foreground">Every requisition has been transferred.</p>
+        {listed.length === 0 ? (
+          <p className="p-4 text-center text-sm text-muted-foreground">
+            {older ? "No requisitions from the last two days." : "Every requisition has been transferred."}
+          </p>
         ) : (
-          data.requisitions.map((r) => (
+          listed.map((r) => (
             <button key={r.docNo} onClick={() => start(r)} className="flex w-full items-center justify-between gap-3 p-3 text-left">
               <div className="min-w-0">
                 <p className="text-sm font-semibold">
@@ -193,12 +260,17 @@ export function Transfers({
           ))
         )}
       </div>
+      {older ? (
+        <button onClick={() => setShowOlder((s) => !s)} className="mt-1.5 w-full text-center text-[0.72rem] font-medium text-muted-foreground underline-offset-2 hover:underline">
+          {showOlder ? "Hide older requisitions" : `Show ${older} older ${older === 1 ? "requisition" : "requisitions"}`}
+        </button>
+      ) : null}
       <button
         onClick={() => start(null)}
         className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm font-medium"
       >
         <Plus className="size-4" />
-        Transfer without a requisition
+        New transfer · direct sale · warehouse
       </button>
 
       <h2 className="mb-2 mt-6 text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -235,11 +307,12 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
     <div className="p-3">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 text-left">
         <div className="min-w-0">
-          <p className="text-sm font-semibold">
+          <p className="flex items-center gap-2 text-sm font-semibold">
             {t.docNo} <span className="font-normal text-muted-foreground">· {shortDate(t.date)}</span>
+            <KindBadge kind={t.kind} />
           </p>
           <p className="truncate text-[0.72rem] text-muted-foreground">
-            {t.salesman || "—"} · {t.route || "—"}
+            {t.kind === "route" ? `${t.salesman || "—"} · ${t.route || "—"}` : t.salesman || t.route || "—"}
             {t.requisitionRef ? ` · from ${t.requisitionRef}` : ""} · {fmt(total)} total
           </p>
         </div>
@@ -310,20 +383,27 @@ function TransferForm({
   draft: Draft;
   dayRows: DailyRow[];
   dayTab: string;
-  lineFor: (code: string, name: string, unit: string, route: string, requested: number | null) => Line;
+  lineFor: (code: string, name: string, unit: string, region: Region, requested: number | null) => Line;
   onChange: (d: Draft) => void;
   onCancel: () => void;
   onSaved: (result: TransferResult, transfer: Transfer) => void;
 }) {
-  const [addKey, setAddKey] = useState("");
   const [passcode, setPasscode] = useState("");
   const [needsPasscode, setNeedsPasscode] = useState(() => !getPasscode());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const region = regionOfDraft(draft);
   const set = (patch: Partial<Draft>) => {
     setError(null);
-    onChange({ ...draft, ...patch });
+    const next = { ...draft, ...patch };
+    // A different destination can mean a different store section (Riyadh vs regular):
+    // suggest each line's Despatch row again.
+    const nextRegion = regionOfDraft(next);
+    if (nextRegion !== region && !patch.lines) {
+      next.lines = next.lines.map((l) => ({ ...l, target: suggestTarget(dayRows, l.code, l.name, nextRegion) }));
+    }
+    onChange(next);
   };
   const setLine = (id: number, patch: Partial<Line>) =>
     set({ lines: draft.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)) });
@@ -333,7 +413,8 @@ function TransferForm({
   const toDespatch = draft.lines.filter((l) => l.target && n(l.stockTransfer) > 0);
 
   const problem = (() => {
-    if (!draft.route && !draft.salesman) return "Pick the route.";
+    if (draft.kind === "route" && !draft.route && !draft.salesman) return "Pick the route.";
+    if (draft.kind === "direct" && !draft.customer.trim()) return "Enter the customer's name.";
     if (!draft.date) return "Pick the transfer date.";
     if (!draft.lines.length) return "Add at least one item.";
     for (const l of draft.lines) {
@@ -370,19 +451,22 @@ function TransferForm({
       target: n(l.stockTransfer) > 0 ? l.target : null,
     }));
     try {
+      const to = destination(draft);
       const result = await saveTransfer({
+        kind: draft.kind,
         date: draft.date,
-        route: draft.route,
-        salesman: draft.salesman,
+        route: to.route,
+        salesman: to.salesman,
         requisitionRef: draft.requisitionRef,
         notes: draft.notes,
         lines,
       });
       onSaved(result, {
+        kind: draft.kind,
         docNo: result.docNo,
         date: draft.date,
-        salesman: draft.salesman,
-        route: draft.route,
+        salesman: to.salesman,
+        route: to.route,
         requisitionRef: draft.requisitionRef,
         notes: draft.notes,
         createdAt: "",
@@ -409,11 +493,57 @@ function TransferForm({
         </button>
       </div>
 
+      {draft.requisitionRef ? null : (
+        <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
+          {(["route", "direct", "warehouse"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => set({ kind: k })}
+              className={`rounded-lg px-1 py-2 text-[0.74rem] font-semibold leading-tight ${
+                draft.kind === k ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {KIND_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
           <span className={labelClass}>Date</span>
           <input type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} className={`${inputClass} mt-1`} />
         </label>
+        {draft.kind === "direct" ? (
+          <label className="block">
+            <span className={labelClass}>Customer</span>
+            <input
+              value={draft.customer}
+              onChange={(e) => set({ customer: e.target.value })}
+              placeholder="Customer or shop name"
+              className={`${inputClass} mt-1`}
+            />
+          </label>
+        ) : draft.kind === "warehouse" ? (
+          <div className="block">
+            <span className={labelClass}>Warehouse</span>
+            <div className="mt-1 grid grid-cols-2 gap-1">
+              {WAREHOUSES.map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => set({ warehouse: w })}
+                  className={`rounded-xl border px-2 py-2.5 text-sm font-medium ${
+                    draft.warehouse === w ? "border-primary bg-primary/10 text-primary" : "border-border bg-background"
+                  }`}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
         <label className="block">
           <span className={labelClass}>Route</span>
           <select
@@ -435,9 +565,18 @@ function TransferForm({
             )}
           </select>
         </label>
+        )}
       </div>
       <p className="mt-1 text-[0.68rem] text-muted-foreground">
-        Salesman: <span className="font-medium text-foreground">{draft.salesman || "—"}</span>
+        {draft.kind === "route" ? (
+          <>
+            Salesman: <span className="font-medium text-foreground">{draft.salesman || "—"}</span>
+          </>
+        ) : (
+          <>
+            Stock from the <span className="font-medium text-foreground">{region === "riyadh" ? "Riyadh" : "regular"}</span> section
+          </>
+        )}
         {toDespatch.length ? (
           <>
             {" "}
@@ -484,10 +623,34 @@ function TransferForm({
                     ))}
                   </select>
                 </label>
-                <Num label="Transfer" value={l.stockTransfer} onChange={(v) => setLine(l.id, { stockTransfer: v })} strong />
-                <Num label="Physical" value={l.physicalStock} onChange={(v) => setLine(l.id, { physicalStock: v })} />
-                <Num label="System" value={l.systemStock} onChange={(v) => setLine(l.id, { systemStock: v })} />
+                <Num label={draft.kind === "route" ? "Transfer" : "Quantity"} value={l.stockTransfer} onChange={(v) => setLine(l.id, { stockTransfer: v })} strong />
+                {draft.kind === "route" ? (
+                  <>
+                    <Num label="Physical" value={l.physicalStock} onChange={(v) => setLine(l.id, { physicalStock: v })} />
+                    <Num label="System" value={l.systemStock} onChange={(v) => setLine(l.id, { systemStock: v })} />
+                  </>
+                ) : (
+                <label className="col-span-2 block">
+                  <span className={labelClass}>Add to Despatch</span>
+                  <select
+                    value={targetKey(l.target)}
+                    onChange={(e) => {
+                      const r = candidates.find((c) => targetKey(c) === e.target.value);
+                      setLine(l.id, { target: r ? { section: r.section, code: r.code, item: r.item } : null });
+                    }}
+                    className={`${smallInput} mt-1 text-left`}
+                  >
+                    <option value="">Don't add</option>
+                    {candidates.map((c) => (
+                      <option key={targetKey(c)} value={targetKey(c)}>
+                        {sectionShort(c.section)} · {fmt(c.closing)} in stock · {c.item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                )}
               </div>
+              {draft.kind === "route" ? (
               <div className="mt-2 grid grid-cols-4 items-end gap-2">
                 <Num label="Reimbursed" value={l.piecesReimbursed} onChange={(v) => setLine(l.id, { piecesReimbursed: v })} />
                 <div className="text-right">
@@ -513,12 +676,13 @@ function TransferForm({
                     <option value="">Don't add</option>
                     {candidates.map((c) => (
                       <option key={targetKey(c)} value={targetKey(c)}>
-                        {sectionShort(c.section)} · {c.item}
+                        {sectionShort(c.section)} · {fmt(c.closing)} in stock · {c.item}
                       </option>
                     ))}
                   </select>
                 </label>
               </div>
+              ) : null}
               {!candidates.length ? (
                 <p className="mt-1 text-[0.66rem] text-muted-foreground">Code #{l.code} isn't on the store sheet, so it can't go to Despatch.</p>
               ) : unitDiffers ? (
@@ -532,28 +696,20 @@ function TransferForm({
         {draft.lines.length === 0 ? <p className="p-4 text-center text-sm text-muted-foreground">No items yet.</p> : null}
       </div>
 
-      <div className="mt-2 flex gap-2">
-        <select value={addKey} onChange={(e) => setAddKey(e.target.value)} className={`${inputClass} min-w-0 flex-1`}>
-          <option value="">Add an item…</option>
-          {data.items.map((i, idx) => (
-            <option key={`${i.code}-${idx}`} value={String(idx)}>
-              {i.name} (#{i.code})
-            </option>
-          ))}
-        </select>
-        <button
-          disabled={!addKey}
-          onClick={() => {
-            const i = data.items[Number(addKey)];
-            if (!i) return;
-            set({ lines: [...draft.lines, lineFor(i.code, i.name, i.unit, draft.route, null)] });
-            setAddKey("");
-          }}
-          className="shrink-0 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
-          Add
-        </button>
-      </div>
+      <ItemPicker
+        items={data.items.map((i, idx) => ({
+          key: String(idx),
+          code: i.code,
+          name: i.name,
+          unit: i.unit,
+          stock: storeRow(dayRows, suggestTarget(dayRows, i.code, i.name, region))?.closing ?? null,
+          added: draft.lines.some((l) => l.code === i.code && l.name === i.name),
+        }))}
+        onPick={(key) => {
+          const i = data.items[Number(key)];
+          if (i) set({ lines: [...draft.lines, lineFor(i.code, i.name, i.unit, region, null)] });
+        }}
+      />
 
       <label className="mt-3 block">
         <span className={labelClass}>Notes</span>
@@ -617,9 +773,10 @@ function SavedCard({ result, transfer, onAnother }: { result: TransferResult; tr
       <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-success">
         <Check className="size-4" />
         Saved as {result.docNo}
+        <KindBadge kind={transfer.kind} />
       </p>
       <p className="mt-1 text-[0.75rem] text-muted-foreground">
-        {transfer.salesman} · {transfer.route}
+        {transfer.kind === "route" ? `${transfer.salesman} · ${transfer.route}` : transfer.salesman || transfer.route}
         {transfer.requisitionRef ? ` · from ${transfer.requisitionRef}` : ""}
       </p>
       {result.despatched.length ? (

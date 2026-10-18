@@ -215,9 +215,16 @@ export async function exportTransferPdf(t: Transfer): Promise<void> {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 10;
-  drawHeader(doc, await logoDataUrl(), `Stock Transfer ${t.docNo}`, [
+  const title = t.kind === "direct" ? "Direct Sale" : t.kind === "warehouse" ? "Warehouse Transfer" : "Stock Transfer";
+  const to =
+    t.kind === "direct"
+      ? `Customer: ${t.salesman || "-"}`
+      : t.kind === "warehouse"
+        ? `To: ${t.salesman || t.route || "-"}`
+        : `${t.salesman || "-"}  |  ${t.route || "-"}`;
+  drawHeader(doc, await logoDataUrl(), `${title} ${t.docNo}`, [
     `ARS International Co SPC  |  ${shortDate(t.date)} ${t.date.slice(0, 4)}`,
-    `${t.salesman || "-"}  |  ${t.route || "-"}${t.requisitionRef ? `  |  Requisition ${t.requisitionRef}` : ""}`,
+    `${to}${t.requisitionRef ? `  |  Requisition ${t.requisitionRef}` : ""}`,
   ]);
 
   const sum = (k: "stockTransfer" | "physicalStock" | "systemStock" | "piecesReimbursed" | "variance") =>
@@ -268,7 +275,8 @@ export async function exportTransferPdf(t: Transfer): Promise<void> {
   doc.line(margin, y, margin + w, y);
   doc.line(pageWidth - margin - w, y, pageWidth - margin, y);
   doc.text("Store keeper", margin, y + 5);
-  doc.text(`Salesman${t.salesman ? ` (${t.salesman})` : ""}`, pageWidth - margin - w, y + 5);
+  const receiver = t.kind === "direct" ? "Customer" : t.kind === "warehouse" ? "Received at warehouse" : "Salesman";
+  doc.text(`${receiver}${t.salesman && t.kind !== "warehouse" ? ` (${t.salesman})` : ""}`, pageWidth - margin - w, y + 5);
 
   doc.save(`${t.docNo || "transfer"}.pdf`);
 }

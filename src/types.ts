@@ -105,7 +105,11 @@ export type TransferLine = {
 };
 
 /** A saved transfer, as the Transfers tab of the requisition sheet holds it. */
+/** Who the stock went to: a salesman's route, a customer directly, or a regional warehouse. */
+export type TransferKindValue = "route" | "direct" | "warehouse";
+
 export type Transfer = {
+  kind: TransferKindValue;
   docNo: string;
   date: string;
   salesman: string;
@@ -130,6 +134,7 @@ export type TransferData = {
 export type StoreTarget = { section: string; code: string; item: string };
 
 export type TransferWrite = {
+  kind: TransferKindValue;
   /** yyyy-mm-dd; Despatch goes to the day tab of this date. */
   date: string;
   route: string;
