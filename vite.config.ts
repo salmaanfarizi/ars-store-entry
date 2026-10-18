@@ -78,7 +78,17 @@ function devDailyApi(): Plugin {
 
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
-        const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as DailyWrite;
+        const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as DailyWrite & { action?: string; date?: string };
+        if (body.action === "nextDay" && body.date) {
+          const [y, m, d] = body.date.split("-").map(Number);
+          const name = `${m}/${d}/${y}`;
+          const from = day.tab;
+          day.tabs.unshift(name);
+          day.tab = name;
+          day.absentees = "";
+          day.rows = day.rows.map((r) => ({ ...r, opening: r.closing, production: null, despatch: null, order: r.order && r.order.status === "MET" ? null : r.order }));
+          return send({ ok: true, tab: name, from, ordersKept: day.rows.filter((r) => r.order).length, ordersDropped: 1 });
+        }
         let cells = 0;
         for (const e of body.entries) {
           const r = day.rows.find((x) => x.section === e.section && x.code === e.code && x.item === e.item);

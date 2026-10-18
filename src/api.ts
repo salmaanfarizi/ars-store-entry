@@ -78,6 +78,26 @@ export async function saveDaily(write: DailyWrite): Promise<{ cells: number }> {
   return { cells: body.cells ?? 0 };
 }
 
+export type NewDayResult = { tab: string; from: string; ordersKept: number; ordersDropped: number };
+
+/** Makes the day tab for `date` (yyyy-mm-dd) from the newest one before it. */
+export async function createDay(date: string): Promise<NewDayResult> {
+  const passcode = getPasscode();
+  if (!passcode) throw new PasscodeError("Passcode required");
+  const res = await fetch("/api/daily", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-app-passcode": passcode },
+    body: JSON.stringify({ action: "nextDay", date }),
+  });
+  if (res.status === 401) {
+    storage.clear();
+    throw new PasscodeError("That passcode wasn't accepted");
+  }
+  const body = (await res.json().catch(() => ({}))) as Partial<NewDayResult> & { message?: string };
+  if (!res.ok) throw new Error(body.message ?? `Couldn't make the day (HTTP ${res.status})`);
+  return { tab: body.tab ?? "", from: body.from ?? "", ordersKept: body.ordersKept ?? 0, ordersDropped: body.ordersDropped ?? 0 };
+}
+
 /* --------------------------------- parsing --------------------------------- */
 
 /** What a quantity box holds → what to send. "" clears the cell. */

@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 import type { DailyData, DailyWrite, NewItem, OrderEdit } from "../../src/types";
-import { authorize, callScript, json, scriptConfigured, text } from "../lib/script";
+import { authorize, callScript, env, json, scriptConfigured, text } from "../lib/script";
 
 /**
  * Reads a day tab live and writes Production, Despatch, Absentees and orders into it.
@@ -144,12 +144,39 @@ export default async (req: Request) => {
     );
   }
 
-  let parsed: DailyWrite | string;
+  let raw: unknown;
   try {
-    parsed = parseWrite(await req.json());
+    raw = await req.json();
   } catch {
-    parsed = "Expected a JSON body.";
+    raw = null;
   }
+
+  // Make the next day tab (what ➕ Next Day does in the sheet).
+  if (raw && typeof raw === "object" && (raw as { action?: unknown }).action === "nextDay") {
+    const date = (raw as { date?: unknown }).date;
+    if (!isIsoDate(date)) return json({ message: "Pick the date of the new day." }, 400);
+    if (!env("NEXTDAY_SCRIPT_URL")) {
+      return json(
+        { message: "Creating a day from the app isn't set up yet (NEXTDAY_SCRIPT_URL). Use ➕ Next Day in the sheet." },
+        503,
+      );
+    }
+    try {
+      // The sheet's own Next Day makes the tab, so the app and the menu build identical days.
+      const reply = await callScript({ method: "POST", body: { action: "nextDay", date } }, "NEXTDAY_SCRIPT_URL");
+      return json({
+        ok: true,
+        tab: reply.tab,
+        from: reply.from,
+        ordersKept: reply.ordersKept ?? 0,
+        ordersDropped: reply.ordersDropped ?? 0,
+      });
+    } catch (err) {
+      return json({ message: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  }
+
+  const parsed: DailyWrite | string = raw === null ? "Expected a JSON body." : parseWrite(raw);
   if (typeof parsed === "string") return json({ message: parsed }, 400);
 
   try {
