@@ -167,6 +167,24 @@ function devTransfersApi(): Plugin {
     name: "dev-transfers-api",
     apply: "serve",
     configureServer(server) {
+      // The month report: three made-up days plus whatever transfers were saved this session.
+      server.middlewares.use("/api/month", (req, res) => {
+        const month = new URL(req.url ?? "", "http://x").searchParams.get("month") ?? "";
+        const [y, m] = month.split("-").map(Number);
+        res.setHeader("content-type", "application/json; charset=utf-8");
+        res.end(
+          JSON.stringify({
+            month,
+            days: [1, 2, 3].map((d) => ({ tab: `${m}/${d}/${y}`, absentees: d === 2 ? "1S" : "", production: 400 + d * 10, despatch: 300 + d * 5, error: "" })),
+            items: [
+              { section: "REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", code: "4402", item: "200 Grams Sunflower Seeds Bundles(10 Pieces x 5 Bags)", opening: 700, production: 900, despatch: 650, closing: 950, days: 3 },
+              { section: "REGULAR SUNFLOWER SEEDS IN BUNDLES/BAGS/CARTON", code: "1126", item: "10kg Blue Sunflower Seeds AHL(PRM)", opening: 91, production: 360, despatch: 40, closing: 411, days: 2 },
+              { section: "POPCORN IN CARTON", code: "1712", item: "PC- Salted-16 gm (8 x 8) Master Carton", opening: 19, production: 0, despatch: 0, closing: 19, days: 0 },
+            ],
+            transfers: transfers.filter((t) => t.date.startsWith(month)),
+          }),
+        );
+      });
       server.middlewares.use("/api/transfers", async (req, res) => {
         const send = (body: unknown, status = 200) => {
           res.statusCode = status;

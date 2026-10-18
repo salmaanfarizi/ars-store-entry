@@ -85,6 +85,7 @@ function doGet(e) {
     const params = (e && e.parameter) || {};
     checkSecret_(params.secret);
     if (params.view === 'transfers') return readTransfers_();
+    if (params.view === 'month') return readMonth_(SpreadsheetApp.openById(SHEET_ID), params.month);
     return readDaily_(SpreadsheetApp.openById(SHEET_ID), params.tab);
   });
 }
@@ -213,13 +214,19 @@ function readLayout_(sheet) {
   const lastCol = sheet.getLastColumn();
   if (lastRow < 1 || lastCol < 1) throw new Error('"' + sheet.getName() + '" is empty.');
   const range = sheet.getRange(1, 1, lastRow, lastCol);
-  const values = range.getDisplayValues();
-  const raw = range.getValues();
+  return parseLayout_(sheet.getName(), range.getDisplayValues(), range.getValues());
+}
 
+/**
+ * The stock rows in a tab's values. They end at the first blank row: below it come the
+ * packing-roll and cover tables, whose numbered rows are not finished goods.
+ * `raw` (the cells' real values) is only needed for Deliver By dates.
+ */
+function parseLayout_(name, values, raw) {
   const headerIdx = values.findIndex(function (r) {
     return norm_(r[0]) === 'no';
   });
-  if (headerIdx < 0) throw new Error('"' + sheet.getName() + '" has no "No" header row.');
+  if (headerIdx < 0) throw new Error('"' + name + '" has no "No" header row.');
   const header = values[headerIdx].map(norm_);
   const cols = {};
   Object.keys(HEADERS).forEach(function (key) {
@@ -236,6 +243,10 @@ function readLayout_(sheet) {
     const r = values[i];
     const first = String(r[0]).trim();
     const item = String(r[2]).trim();
+    if (!r.some(function (v) { return String(v).trim(); })) {
+      if (items.length) break;
+      continue;
+    }
     if (!first && !item) continue;
     if (!isNumber_(first)) {
       if (first) section = first;
@@ -253,7 +264,7 @@ function readLayout_(sheet) {
       closing: num_(cell(r, cols.closing)),
       mini: num_(cell(r, cols.mini)),
       orderText: cell(r, cols.order),
-      deliverBy: cols.deliverBy >= 0 ? isoDate_(raw[i][cols.deliverBy]) : '',
+      deliverBy: raw && cols.deliverBy >= 0 ? isoDate_(raw[i][cols.deliverBy]) : '',
       status: cell(r, cols.status),
     });
   }
@@ -717,6 +728,45 @@ function isoOf_(text) {
   return t;
 }
 
+/** The Transfers tab's rows grouped into transfers by doc no, in sheet order. */
+function transfersOf_(trfRows) {
+  const used = {};
+  const transfers = {};
+  const order = [];
+  trfRows.slice(1).forEach(function (r) {
+    const doc = String(r[0] || '').trim();
+    if (!doc) return;
+    if (r[4]) used[String(r[4]).trim()] = doc;
+    if (!transfers[doc]) {
+      transfers[doc] = {
+        kind: TRANSFER_KINDS.indexOf(String(r[15] || '').trim()) >= 0 ? String(r[15]).trim() : 'route',
+        docNo: doc,
+        date: isoOf_(r[1]),
+        salesman: String(r[2] || ''),
+        route: String(r[3] || ''),
+        requisitionRef: String(r[4] || ''),
+        notes: String(r[13] || ''),
+        invoiceNo: String(r[16] || ''),
+        createdAt: String(r[14] || ''),
+        lines: [],
+      };
+      order.push(doc);
+    }
+    transfers[doc].lines.push({
+      code: String(r[5] || ''),
+      name: String(r[6] || ''),
+      unit: String(r[7] || ''),
+      stockTransfer: num_(r[8]) || 0,
+      physicalStock: num_(r[9]) || 0,
+      systemStock: num_(r[10]) || 0,
+      piecesReimbursed: num_(r[11]) || 0,
+      variance: num_(r[12]) || 0,
+    });
+  });
+
+  return { used: used, transfers: transfers, order: order };
+}
+
 /**
  * What the transfer screen needs: open requisitions (no transfer made against them yet) with
  * their lines, recent transfers, the item list with units, and the salesmen by route.
@@ -753,40 +803,10 @@ function readTransfers_() {
       return s.route || s.name;
     });
 
-  const trfRows = rowsOf_(reqSheet_('Transfers'));
-  const used = {};
-  const transfers = {};
-  const order = [];
-  trfRows.slice(1).forEach(function (r) {
-    const doc = String(r[0] || '').trim();
-    if (!doc) return;
-    if (r[4]) used[String(r[4]).trim()] = doc;
-    if (!transfers[doc]) {
-      transfers[doc] = {
-        kind: TRANSFER_KINDS.indexOf(String(r[15] || '').trim()) >= 0 ? String(r[15]).trim() : 'route',
-        docNo: doc,
-        date: isoOf_(r[1]),
-        salesman: String(r[2] || ''),
-        route: String(r[3] || ''),
-        requisitionRef: String(r[4] || ''),
-        notes: String(r[13] || ''),
-        invoiceNo: String(r[16] || ''),
-        createdAt: String(r[14] || ''),
-        lines: [],
-      };
-      order.push(doc);
-    }
-    transfers[doc].lines.push({
-      code: String(r[5] || ''),
-      name: String(r[6] || ''),
-      unit: String(r[7] || ''),
-      stockTransfer: num_(r[8]) || 0,
-      physicalStock: num_(r[9]) || 0,
-      systemStock: num_(r[10]) || 0,
-      piecesReimbursed: num_(r[11]) || 0,
-      variance: num_(r[12]) || 0,
-    });
-  });
+  const parsed = transfersOf_(rowsOf_(reqSheet_('Transfers')));
+  const used = parsed.used;
+  const transfers = parsed.transfers;
+  const order = parsed.order;
 
   const reqRows = rowsOf_(reqSheet_('Requisitions'));
   const reqs = {};
@@ -976,6 +996,125 @@ function writeTransfer_(body) {
     despatched: plan.map(function (p) {
       return { item: p.item, added: p.plus, despatch: p.start + p.plus };
     }),
+  };
+}
+
+/* ----------------------------- month report ----------------------------- */
+
+/** Past day tabs rarely change; a month report caches each this long (seconds). */
+const MONTH_CACHE_SECONDS = 60 * 60;
+
+/** One day tab, cut down to what the month report needs. */
+function monthDay_(tab) {
+  const lastRow = Math.min(tab.sheet.getLastRow(), 250);
+  const lastCol = Math.min(tab.sheet.getLastColumn(), 13);
+  const values = tab.sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  const layout = parseLayout_(tab.name, values, null);
+  // Absentees: the first filled cell to the right of the label, in the top rows.
+  let absentees = '';
+  values.slice(0, 6).some(function (r) {
+    const c = r.findIndex(function (v) {
+      return norm_(v).indexOf(ABSENTEES_LABEL) === 0;
+    });
+    if (c < 0) return false;
+    const v = r.slice(c + 1).filter(function (x) {
+      return String(x).trim();
+    })[0];
+    absentees = v ? String(v).trim() : '';
+    return true;
+  });
+  return {
+    tab: tab.name,
+    absentees: absentees,
+    items: layout.items.map(function (x) {
+      return [x.section, x.code, x.item, x.opening, x.production, x.despatch, x.closing];
+    }),
+  };
+}
+
+/**
+ * Every day tab of a month (yyyy-mm) up to today: production and despatch per item and
+ * per day, opening from the month's first tab and closing from its last, and the month's
+ * transfers.
+ */
+function readMonth_(ss, month) {
+  const m = String(month || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) throw new Error('Pick a month.');
+  const year = Number(m[1]);
+  const mon = Number(m[2]);
+  const today = todayTime_();
+  const cache = CacheService.getScriptCache();
+  const tabs = datedTabs_(ss).filter(function (t) {
+    const d = new Date(t.t);
+    return d.getFullYear() === year && d.getMonth() + 1 === mon && t.t <= today;
+  });
+
+  const days = tabs.map(function (t) {
+    const key = 'month:' + t.name;
+    const cached = t.t < today ? cache.get(key) : null;
+    if (cached) return JSON.parse(cached);
+    let day;
+    try {
+      day = monthDay_(t);
+    } catch (err) {
+      day = { tab: t.name, absentees: '', items: [], error: String(err && err.message || err) };
+    }
+    if (t.t < today) {
+      try {
+        cache.put(key, JSON.stringify(day), MONTH_CACHE_SECONDS);
+      } catch (err) {
+        /* too large to cache */
+      }
+    }
+    return day;
+  });
+
+  const items = {};
+  const order = [];
+  days.forEach(function (d) {
+    d.items.forEach(function (x) {
+      const k = itemKey_({ section: x[0], code: x[1], item: x[2] });
+      if (!items[k]) {
+        items[k] = { section: x[0], code: x[1], item: x[2], opening: x[3], production: 0, despatch: 0, closing: null, days: 0 };
+        order.push(k);
+      }
+      const it = items[k];
+      it.production += x[4] || 0;
+      it.despatch += x[5] || 0;
+      if (x[4] || x[5]) it.days++;
+      it.closing = x[6];
+    });
+  });
+
+  const prefix = m[1] + '-' + m[2];
+  const parsed = transfersOf_(rowsOf_(reqSheet_('Transfers')));
+  const transfers = parsed.order
+    .map(function (d) {
+      return parsed.transfers[d];
+    })
+    .filter(function (t) {
+      return t.date.slice(0, 7) === prefix;
+    })
+    .sort(function (a, b) {
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : a.docNo < b.docNo ? -1 : 1;
+    });
+
+  return {
+    ok: true,
+    month: prefix,
+    days: days.map(function (d) {
+      return {
+        tab: d.tab,
+        absentees: d.absentees,
+        production: d.items.reduce(function (n, x) { return n + (x[4] || 0); }, 0),
+        despatch: d.items.reduce(function (n, x) { return n + (x[5] || 0); }, 0),
+        error: d.error || '',
+      };
+    }),
+    items: order.map(function (k) {
+      return items[k];
+    }),
+    transfers: transfers,
   };
 }
 

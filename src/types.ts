@@ -152,3 +152,23 @@ export type TransferResult = {
   day: string;
   despatched: { item: string; added: number; despatch: number }[];
 };
+
+/** A month of day tabs and transfers, for the monthly report. */
+export type MonthData = {
+  /** yyyy-mm */
+  month: string;
+  days: { tab: string; absentees: string; production: number; despatch: number; error: string }[];
+  /** Opening from the month's first day tab, closing from its last; production and despatch summed. */
+  items: {
+    section: string;
+    code: string;
+    item: string;
+    opening: number | null;
+    production: number;
+    despatch: number;
+    closing: number | null;
+    /** Days with production or despatch. */
+    days: number;
+  }[];
+  transfers: Transfer[];
+};
