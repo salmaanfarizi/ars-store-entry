@@ -169,6 +169,7 @@ function devTransfersApi(): Plugin {
         const body = JSON.parse(Buffer.concat(chunks).toString() || "{}") as TransferWrite;
         const docNo = `TRF-2026-${String(transfers.length + 101).padStart(4, "0")}`;
         transfers.unshift({
+          kind: body.kind ?? "route",
           docNo,
           date: body.date,
           salesman: body.salesman,

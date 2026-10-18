@@ -20,7 +20,9 @@ function parseWrite(body: unknown): TransferWrite | string {
   if (!body || typeof body !== "object") return "Expected a JSON body.";
   const b = body as Record<string, unknown>;
   if (!isIsoDate(b.date)) return "Pick the transfer date.";
+  const kind = b.kind === "direct" || b.kind === "warehouse" ? b.kind : "route";
   const write: TransferWrite = {
+    kind,
     date: b.date,
     route: text(b.route, 80),
     salesman: text(b.salesman, 80),
@@ -28,7 +30,9 @@ function parseWrite(body: unknown): TransferWrite | string {
     notes: text(b.notes, 300),
     lines: [],
   };
-  if (!write.route && !write.salesman) return "Pick the route or salesman.";
+  if (!write.route && !write.salesman) {
+    return kind === "direct" ? "Enter the customer's name." : kind === "warehouse" ? "Pick the warehouse." : "Pick the route or salesman.";
+  }
   if (!Array.isArray(b.lines) || b.lines.length === 0) return "Add at least one item.";
   if (b.lines.length > 100) return "Too many items in one transfer.";
 
