@@ -1,0 +1,125 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@source "../index.html";
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+}
+
+:root {
+  --radius: 0.875rem;
+  --background: oklch(0.976 0.012 95);
+  --foreground: oklch(0.24 0.03 150);
+  --surface: oklch(0.955 0.016 95);
+  --card: oklch(0.995 0.005 95);
+  --card-foreground: oklch(0.24 0.03 150);
+  --primary: oklch(0.42 0.09 155);
+  --primary-foreground: oklch(0.98 0.01 95);
+  --secondary: oklch(0.93 0.02 120);
+  --secondary-foreground: oklch(0.3 0.04 150);
+  --muted: oklch(0.94 0.012 95);
+  --muted-foreground: oklch(0.52 0.02 140);
+  --accent: oklch(0.78 0.16 75);
+  --accent-foreground: oklch(0.26 0.05 60);
+  --destructive: oklch(0.55 0.19 27);
+  --destructive-foreground: oklch(0.98 0.01 95);
+  --warning: oklch(0.75 0.15 72);
+  --warning-foreground: oklch(0.28 0.06 60);
+  --success: oklch(0.55 0.11 155);
+  --success-foreground: oklch(0.98 0.01 95);
+  --border: oklch(0.89 0.014 100);
+  --input: oklch(0.89 0.014 100);
+  --ring: oklch(0.42 0.09 155);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Keeps the sticky header/nav pinned when the iOS keyboard or rubber-band scroll appears. */
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Home-screen app should feel native: no long-press callout, no text selection on chrome. */
+  button,
+  a,
+  nav {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@utility card-surface {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1px 2px oklch(0.24 0.03 150 / 0.05);
+}
+
+@utility safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+@utility safe-top {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@utility skeleton {
+  background-color: var(--color-muted);
+  border-radius: var(--radius-md);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
