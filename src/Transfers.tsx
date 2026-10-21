@@ -19,7 +19,7 @@ import {
   type Region,
   type TransferKind,
   type Warehouse,
-} from "./transfers";
+} from "./transfers-api";
 import type { DailyRow, Requisition, StoreTarget, Transfer, TransferData, TransferResult } from "./types";
 
 const inputClass =

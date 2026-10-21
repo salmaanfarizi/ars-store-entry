@@ -28,7 +28,7 @@ import {
 } from "./api";
 import { DUE_SOON_DAYS, orderDue, pendingOrder, shortfall, stockSignal, type Due } from "./insights";
 import { Transfers } from "./Transfers";
-import { isoToTab, tabToIso } from "./transfers";
+import { isoToTab, tabToIso } from "./transfers-api";
 import type { DailyData, DailyRow, DailyWrite, NewItem, OrderEdit } from "./types";
 
 type OrderForm = { qty: string; deliverBy: string; status: string };
@@ -974,6 +974,8 @@ function NewDayCard({
   const today = saudiToday();
   const latest = tabToIso(latestTab);
   const [busy, setBusy] = useState(false);
+  /** Seconds the queued run has been going, so the button is visibly alive. */
+  const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [passcode, setPasscode] = useState("");
   const [askPasscode, setAskPasscode] = useState(() => !getPasscode());
@@ -986,9 +988,14 @@ function NewDayCard({
       savePasscode(passcode.trim());
     }
     setBusy(true);
+    setWaited(0);
     setError(null);
+    const started = Date.now();
     try {
-      const r = await createDay(today);
+      // The sheet queues the work and we poll, so this takes the better part
+      // of a minute. A button that says nothing for that long reads as broken
+      // and gets pressed again.
+      const r = await createDay(today, () => setWaited(Math.round((Date.now() - started) / 1000)));
       onCreated(
         r.tab,
         `Made the ${r.tab} tab from ${r.from} · ${r.ordersKept} pending ${r.ordersKept === 1 ? "order" : "orders"} carried` +
@@ -1026,7 +1033,13 @@ function NewDayCard({
         className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60"
       >
         <Plus className="size-4" />
-        {busy ? "Making the tab…" : dirty ? "Save this day's changes first" : `Create the ${name} tab`}
+        {busy
+          ? waited > 3
+            ? `Making the tab… ${waited}s`
+            : "Making the tab…"
+          : dirty
+            ? "Save this day's changes first"
+            : `Create the ${name} tab`}
       </button>
     </div>
   );

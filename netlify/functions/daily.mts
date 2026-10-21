@@ -162,14 +162,29 @@ export default async (req: Request) => {
       );
     }
     try {
-      // The sheet's own Next Day makes the tab, so the app and the menu build identical days.
+      // The sheet's own Next Day makes the tab, so the app and the menu build identical
+      // days. It only QUEUES here: the work reads every tab and writes a new one, which
+      // does not fit in the 25 seconds we wait. The client polls nextDayStatus.
       const reply = await callScript({ method: "POST", body: { action: "nextDay", date } }, "NEXTDAY_SCRIPT_URL");
+      return json({ ok: true, queued: reply.queued !== false, pending: true, date: reply.date ?? date });
+    } catch (err) {
+      return json({ message: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  }
+
+  // How the queued day is getting on.
+  if (raw && typeof raw === "object" && (raw as { action?: unknown }).action === "nextDayStatus") {
+    if (!env("NEXTDAY_SCRIPT_URL")) return json({ message: "Not set up (NEXTDAY_SCRIPT_URL)." }, 503);
+    try {
+      const reply = await callScript({ method: "POST", body: { action: "nextDayStatus" } }, "NEXTDAY_SCRIPT_URL");
       return json({
         ok: true,
+        state: reply.state ?? "idle",
         tab: reply.tab,
         from: reply.from,
         ordersKept: reply.ordersKept ?? 0,
         ordersDropped: reply.ordersDropped ?? 0,
+        error: reply.error,
       });
     } catch (err) {
       return json({ message: err instanceof Error ? err.message : String(err) }, 502);
