@@ -1,0 +1,4 @@
+# Only the script and its manifest belong in the Apps Script project.
+next-day-api.gs
+**/*.md
+.claspignore
