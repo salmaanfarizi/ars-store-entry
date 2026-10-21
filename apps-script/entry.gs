@@ -37,9 +37,16 @@ const TRANSFER_HEADER = [
   'transfer_type',
   // The customer's invoice number, for direct sales.
   'invoice_no',
+  // Why an internal adjustment was made: replaced, damaged or other. The
+  // readable wording is in `salesman`, where every report already looks; this
+  // is the value to filter on, so "Damaged" cannot be told apart from a
+  // customer who happens to be called that.
+  'adjust_reason',
 ];
 
-const TRANSFER_KINDS = ['route', 'direct', 'warehouse'];
+const TRANSFER_KINDS = ['route', 'direct', 'warehouse', 'adjustment'];
+/** Reasons an 'adjustment' may carry. Anything else is refused. */
+const ADJUST_REASONS = ['replaced', 'damaged', 'other'];
 
 const TRANSFER_UNITS = ['Bag', 'Bundle', 'Box', 'Carton'];
 
@@ -747,6 +754,7 @@ function transfersOf_(trfRows) {
         requisitionRef: String(r[4] || ''),
         notes: String(r[13] || ''),
         invoiceNo: String(r[16] || ''),
+        adjustReason: String(r[17] || ''),
         createdAt: String(r[14] || ''),
         lines: [],
       };
@@ -893,6 +901,10 @@ function writeTransfer_(body) {
   const notes = String(body.notes || '').trim().slice(0, 300);
   const kind = TRANSFER_KINDS.indexOf(body.kind) >= 0 ? body.kind : 'route';
   const invoiceNo = kind === 'direct' ? String(body.invoiceNo || '').trim().slice(0, 60) : '';
+  const adjustReason = kind === 'adjustment' &&
+    ADJUST_REASONS.indexOf(String(body.adjustReason || '').trim()) >= 0
+      ? String(body.adjustReason).trim() : '';
+  if (kind === 'adjustment' && !adjustReason) throw new Error('Pick a reason for the adjustment.');
 
   const trfSheet = reqSheet_('Transfers');
   const existing = rowsOf_(trfSheet);
@@ -963,7 +975,7 @@ function writeTransfer_(body) {
       docNo, date, salesman, route, ref,
       l.code, l.name, l.unit,
       l.stockTransfer, l.physicalStock, l.systemStock, l.piecesReimbursed, l.physicalStock - l.systemStock,
-      notes, createdAt, kind, invoiceNo,
+      notes, createdAt, kind, invoiceNo, adjustReason,
     ];
   });
 
@@ -971,7 +983,10 @@ function writeTransfer_(body) {
   if (!existing.length) {
     trfSheet.getRange(1, 1, 1, TRANSFER_HEADER.length).setValues([TRANSFER_HEADER]);
   } else {
-    [16, 17].forEach(function (c) {
+    // 18 is adjust_reason, added with internal adjustments. An old tab gains
+    // it the first time one is written; rows before it stay 17 wide, which is
+    // what reading with a default empty string is for.
+    [16, 17, 18].forEach(function (c) {
       if (String(existing[0][c - 1] || '').trim() !== TRANSFER_HEADER[c - 1]) {
         trfSheet.getRange(1, c).setValue(TRANSFER_HEADER[c - 1]);
       }
@@ -981,7 +996,7 @@ function writeTransfer_(body) {
   const block = trfSheet.getRange(start, 1, rows.length, TRANSFER_HEADER.length);
   // Text columns stay text (no date or number guessing), as the old app's RAW writes left them.
   trfSheet.getRange(start, 1, rows.length, 8).setNumberFormat('@');
-  trfSheet.getRange(start, 14, rows.length, 4).setNumberFormat('@');
+  trfSheet.getRange(start, 14, rows.length, 5).setNumberFormat('@');
   block.setValues(rows);
 
   plan.forEach(function (p) {

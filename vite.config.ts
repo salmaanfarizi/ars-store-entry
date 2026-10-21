@@ -210,6 +210,7 @@ function devTransfersApi(): Plugin {
         const docNo = `TRF-2026-${String(transfers.length + 101).padStart(4, "0")}`;
         transfers.unshift({
           kind: body.kind ?? "route",
+          adjustReason: body.adjustReason ?? "",
           docNo,
           date: body.date,
           salesman: body.salesman,

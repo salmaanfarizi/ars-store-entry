@@ -105,8 +105,15 @@ export type TransferLine = {
 };
 
 /** A saved transfer, as the Transfers tab of the requisition sheet holds it. */
-/** Who the stock went to: a salesman's route, a customer directly, or a regional warehouse. */
-export type TransferKindValue = "route" | "direct" | "warehouse";
+/**
+ * Where the stock went: a salesman's route, a customer directly, a regional
+ * warehouse, or nowhere — an internal adjustment, which takes stock off the
+ * books without it leaving as a sale.
+ */
+export type TransferKindValue = "route" | "direct" | "warehouse" | "adjustment";
+
+/** Why an internal adjustment was made. "other" carries typed text with it. */
+export type AdjustReasonValue = "replaced" | "damaged" | "other";
 
 export type Transfer = {
   kind: TransferKindValue;
@@ -117,6 +124,8 @@ export type Transfer = {
   requisitionRef: string;
   /** Direct sales only; empty otherwise. */
   invoiceNo: string;
+  /** Adjustments only: "replaced", "damaged", or "other". Empty otherwise. */
+  adjustReason: AdjustReasonValue | "";
   notes: string;
   createdAt: string;
   lines: TransferLine[];
@@ -143,6 +152,8 @@ export type TransferWrite = {
   salesman: string;
   requisitionRef: string;
   invoiceNo: string;
+  /** Adjustments only. The readable wording goes in `salesman`. */
+  adjustReason: AdjustReasonValue | "";
   notes: string;
   lines: (Omit<TransferLine, "variance"> & { target: StoreTarget | null })[];
 };

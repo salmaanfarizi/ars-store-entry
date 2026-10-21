@@ -4,6 +4,8 @@ import { fmt, getPasscode, PasscodeError, savePasscode, shortDate } from "./api"
 import { ItemPicker } from "./ItemPicker";
 import {
   isoToTab,
+  ADJUST_REASONS,
+  adjustLabel,
   KIND_LABEL,
   loadTransfers,
   regionOf,
@@ -17,6 +19,7 @@ import {
   WAREHOUSES,
   warehouseRegion,
   type Region,
+  type AdjustReason,
   type TransferKind,
   type Warehouse,
 } from "./transfers-api";
@@ -56,18 +59,36 @@ type Draft = {
   invoiceNo: string;
   /** kind "warehouse": where it went. */
   warehouse: Warehouse;
+  /** kind "adjustment": why the stock came off. */
+  adjustReason: AdjustReason | "";
+  /** kind "adjustment", reason "other": the typed reason. */
+  adjustOther: string;
   notes: string;
   lines: Line[];
 };
 
 /** The store section a draft draws on: Riyadh for Riyadh routes and the Riyadh warehouse. */
 const regionOfDraft = (d: Pick<Draft, "kind" | "route" | "warehouse">): Region =>
-  d.kind === "warehouse" ? warehouseRegion(d.warehouse) : d.kind === "direct" ? "regular" : regionOf(d.route);
+  d.kind === "warehouse"
+    ? warehouseRegion(d.warehouse)
+    : // A direct sale and an adjustment both come off the general pool.
+      d.kind === "direct" || d.kind === "adjustment"
+      ? "regular"
+      : regionOf(d.route);
 
 /** What goes in the sheet's route and salesman columns for each kind of transfer. */
 function destination(d: Draft): { route: string; salesman: string } {
   if (d.kind === "direct") return { route: "Direct sale", salesman: d.customer.trim() };
   if (d.kind === "warehouse") return { route: `${d.warehouse} warehouse`, salesman: `${d.warehouse} warehouse` };
+  // The reason goes where the salesman would: it is what a row needs to read
+  // as on the Transfers tab, where nothing knows about adjustment reasons.
+  // The machine-readable value travels separately, in adjustReason.
+  if (d.kind === "adjustment") {
+    return {
+      route: "Internal adjustment",
+      salesman: d.adjustReason === "other" ? d.adjustOther.trim() : adjustLabel(d.adjustReason as AdjustReason),
+    };
+  }
   return { route: d.route, salesman: d.salesman };
 }
 
@@ -75,12 +96,21 @@ const KIND_CLASS: Record<TransferKind, string> = {
   route: "bg-primary/10 text-primary",
   direct: "bg-accent/25 text-accent-foreground",
   warehouse: "bg-success/12 text-success",
+  // Not a sale. Coloured like a warning so it never reads as one at a glance.
+  adjustment: "bg-warning/20 text-warning-foreground",
+};
+
+const KIND_SHORT: Record<TransferKind, string> = {
+  route: "Route",
+  direct: "Direct sale",
+  warehouse: "Warehouse",
+  adjustment: "Adjustment",
 };
 
 export function KindBadge({ kind }: { kind: TransferKind }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-[0.62rem] font-semibold uppercase tracking-wide ${KIND_CLASS[kind]}`}>
-      {kind === "route" ? "Route" : kind === "direct" ? "Direct sale" : "Warehouse"}
+      {KIND_SHORT[kind]}
     </span>
   );
 }
@@ -172,6 +202,8 @@ export function Transfers({
       customer: "",
       invoiceNo: "",
       warehouse: "Riyadh",
+      adjustReason: "",
+      adjustOther: "",
       notes: "",
       lines: req ? req.lines.map((l) => lineFor(l.code, l.name, l.unit, regionOf(req.route), l.quantity)) : [],
     });
@@ -471,6 +503,9 @@ function TransferForm({
   const problem = (() => {
     if (draft.kind === "route" && !draft.route && !draft.salesman) return "Pick the route.";
     if (draft.kind === "direct" && !draft.customer.trim()) return "Enter the customer's name.";
+    if (draft.kind === "adjustment" && !draft.adjustReason) return "Pick a reason for the adjustment.";
+    if (draft.kind === "adjustment" && draft.adjustReason === "other" && !draft.adjustOther.trim())
+      return "Say what the adjustment is for.";
     if (!draft.date) return "Pick the transfer date.";
     if (!draft.lines.length) return "Add at least one item.";
     for (const l of draft.lines) {
@@ -515,6 +550,7 @@ function TransferForm({
         salesman: to.salesman,
         requisitionRef: draft.requisitionRef,
         invoiceNo: draft.kind === "direct" ? draft.invoiceNo.trim() : "",
+        adjustReason: draft.kind === "adjustment" ? draft.adjustReason : "",
         notes: draft.notes,
         lines,
       });
@@ -526,6 +562,7 @@ function TransferForm({
         route: to.route,
         requisitionRef: draft.requisitionRef,
         invoiceNo: draft.kind === "direct" ? draft.invoiceNo.trim() : "",
+        adjustReason: draft.kind === "adjustment" ? draft.adjustReason : "",
         notes: draft.notes,
         createdAt: "",
         lines: lines.map(({ target: _t, ...l }) => ({ ...l, variance: l.physicalStock - l.systemStock })),
@@ -552,8 +589,8 @@ function TransferForm({
       </div>
 
       {draft.requisitionRef ? null : (
-        <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-border bg-card p-1">
-          {(["route", "direct", "warehouse"] as const).map((k) => (
+        <div className="mt-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-card p-1 sm:grid-cols-4">
+          {(["route", "direct", "warehouse", "adjustment"] as const).map((k) => (
             <button
               key={k}
               type="button"
@@ -583,6 +620,26 @@ function TransferForm({
               className={`${inputClass} mt-1`}
             />
           </label>
+        ) : draft.kind === "adjustment" ? (
+          <div className="block">
+            <span className={labelClass}>Reason</span>
+            <div className="mt-1 grid grid-cols-3 gap-1">
+              {ADJUST_REASONS.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => set({ adjustReason: r.value })}
+                  className={`rounded-xl border px-2 py-2.5 text-[0.74rem] font-medium leading-tight ${
+                    draft.adjustReason === r.value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : draft.kind === "warehouse" ? (
           <div className="block">
             <span className={labelClass}>Warehouse</span>
@@ -632,6 +689,21 @@ function TransferForm({
             value={draft.invoiceNo}
             onChange={(e) => set({ invoiceNo: e.target.value })}
             placeholder="Optional"
+            className={`${inputClass} mt-1`}
+          />
+        </label>
+      ) : null}
+      {/* "Other" has to say what it is, or the row on the Transfers tab reads
+          "Other" for ever and nobody can tell two of them apart. Required,
+          unlike the invoice number above it. */}
+      {draft.kind === "adjustment" && draft.adjustReason === "other" ? (
+        <label className="mt-2 block">
+          <span className={labelClass}>Reason for adjustment</span>
+          <input
+            value={draft.adjustOther}
+            onChange={(e) => set({ adjustOther: e.target.value })}
+            placeholder="What is it for?"
+            maxLength={120}
             className={`${inputClass} mt-1`}
           />
         </label>

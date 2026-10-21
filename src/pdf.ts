@@ -297,12 +297,17 @@ export async function exportTransfersDayPdf(date: string, transfers: Transfer[])
   const margin = 10;
   const day = transfers.filter((t) => t.date === date);
   const qty = (t: Transfer) => t.lines.reduce((n, l) => n + l.stockTransfer, 0);
-  const kindName = { route: "Route", direct: "Direct sale", warehouse: "Warehouse" } as const;
+  const kindName = {
+    route: "Route",
+    direct: "Direct sale",
+    warehouse: "Warehouse",
+    adjustment: "Adjustment",
+  } as const;
   const count = (k: Transfer["kind"]) => day.filter((t) => t.kind === k).length;
 
   drawHeader(doc, await logoDataUrl(), "Transfers of the Day", [
     `ARS International Co SPC  |  ${shortDate(date)} ${date.slice(0, 4)}`,
-    `${day.length} ${day.length === 1 ? "transfer" : "transfers"}: ${count("route")} route, ${count("direct")} direct, ${count("warehouse")} warehouse  |  Generated ${generatedAt()}`,
+    `${day.length} ${day.length === 1 ? "transfer" : "transfers"}: ${count("route")} route, ${count("direct")} direct, ${count("warehouse")} warehouse, ${count("adjustment")} adjustment  |  Generated ${generatedAt()}`,
   ]);
 
   let y = 37;
@@ -350,23 +355,30 @@ export async function exportTransfersDayPdf(date: string, transfers: Transfer[])
     after();
 
     // The same item can go out on several transfers; one row per item, split by kind.
-    type Sum = { code: string; name: string; unit: string; route: number; direct: number; warehouse: number };
+    type Sum = {
+      code: string; name: string; unit: string;
+      route: number; direct: number; warehouse: number; adjustment: number;
+    };
     const sums = new Map<string, Sum>();
     for (const t of day) {
       for (const l of t.lines) {
         const key = `${l.code}|${l.name}|${l.unit}`;
-        const s = sums.get(key) ?? { code: l.code, name: l.name, unit: l.unit, route: 0, direct: 0, warehouse: 0 };
+        const s = sums.get(key) ?? {
+          code: l.code, name: l.name, unit: l.unit,
+          route: 0, direct: 0, warehouse: 0, adjustment: 0,
+        };
         s[t.kind] += l.stockTransfer;
         sums.set(key, s);
       }
     }
     const items = [...sums.values()].sort((a, b) => a.name.localeCompare(b.name));
-    const total = (k: "route" | "direct" | "warehouse") => items.reduce((n, s) => n + s[k], 0);
+    const total = (k: "route" | "direct" | "warehouse" | "adjustment") =>
+      items.reduce((n, s) => n + s[k], 0);
     heading(`By item (${items.length})`);
     autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
-      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Total"]],
+      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Adjust", "Total"]],
       body: items.map((s) => [
         s.code,
         s.name,
@@ -374,14 +386,21 @@ export async function exportTransfersDayPdf(date: string, transfers: Transfer[])
         s.route ? fmt(s.route) : "",
         s.direct ? fmt(s.direct) : "",
         s.warehouse ? fmt(s.warehouse) : "",
-        fmt(s.route + s.direct + s.warehouse),
+        s.adjustment ? fmt(s.adjustment) : "",
+        fmt(s.route + s.direct + s.warehouse + s.adjustment),
       ]),
       foot: [
         [
           "",
           "Total",
           "",
-          ...[total("route"), total("direct"), total("warehouse"), total("route") + total("direct") + total("warehouse")].map((n) => ({
+          ...[
+            total("route"),
+            total("direct"),
+            total("warehouse"),
+            total("adjustment"),
+            total("route") + total("direct") + total("warehouse") + total("adjustment"),
+          ].map((n) => ({
             content: fmt(n),
             styles: { halign: "right" as const },
           })),
@@ -496,8 +515,13 @@ export async function exportMonthPdf(data: MonthData): Promise<void> {
   }
 
   // 3. Transfers: by kind, by item, then each one.
-  const kinds = ["route", "direct", "warehouse"] as const;
-  const kindName = { route: "Route", direct: "Direct sale", warehouse: "Warehouse" } as const;
+  const kinds = ["route", "direct", "warehouse", "adjustment"] as const;
+  const kindName = {
+    route: "Route",
+    direct: "Direct sale",
+    warehouse: "Warehouse",
+    adjustment: "Adjustment",
+  } as const;
   const qty = (t: Transfer) => sum(t.lines, (l) => l.stockTransfer);
   heading(`Transfers (${data.transfers.length})`);
   if (!data.transfers.length) none("No transfers in this month.");
@@ -516,12 +540,18 @@ export async function exportMonthPdf(data: MonthData): Promise<void> {
     });
     after();
 
-    type Sum = { code: string; name: string; unit: string; route: number; direct: number; warehouse: number };
+    type Sum = {
+      code: string; name: string; unit: string;
+      route: number; direct: number; warehouse: number; adjustment: number;
+    };
     const sums = new Map<string, Sum>();
     for (const t of data.transfers) {
       for (const l of t.lines) {
         const key = `${l.code}|${l.name}|${l.unit}`;
-        const s = sums.get(key) ?? { code: l.code, name: l.name, unit: l.unit, route: 0, direct: 0, warehouse: 0 };
+        const s = sums.get(key) ?? {
+          code: l.code, name: l.name, unit: l.unit,
+          route: 0, direct: 0, warehouse: 0, adjustment: 0,
+        };
         s[t.kind] += l.stockTransfer;
         sums.set(key, s);
       }
@@ -531,7 +561,7 @@ export async function exportMonthPdf(data: MonthData): Promise<void> {
     autoTable(doc, {
       ...base,
       startY: y,
-      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Total"]],
+      head: [["Code", "Item", "Unit", "Route", "Direct", "Warehouse", "Adjust", "Total"]],
       body: items.map((s) => [
         s.code,
         s.name,
@@ -539,10 +569,21 @@ export async function exportMonthPdf(data: MonthData): Promise<void> {
         s.route ? fmt(s.route) : "",
         s.direct ? fmt(s.direct) : "",
         s.warehouse ? fmt(s.warehouse) : "",
-        fmt(s.route + s.direct + s.warehouse),
+        s.adjustment ? fmt(s.adjustment) : "",
+        fmt(s.route + s.direct + s.warehouse + s.adjustment),
       ]),
-      foot: [["", "Total", "", ...kinds.map((k) => right(sum(items, (s) => s[k]))), right(sum(items, (s) => s.route + s.direct + s.warehouse))]],
-      columnStyles: { 1: { cellWidth: 78 }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right", fontStyle: "bold" } },
+      foot: [
+        [
+          "", "Total", "",
+          ...kinds.map((k) => right(sum(items, (s) => s[k]))),
+          right(sum(items, (s) => s.route + s.direct + s.warehouse + s.adjustment)),
+        ],
+      ],
+      columnStyles: {
+        1: { cellWidth: 70 },
+        3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" },
+        6: { halign: "right" }, 7: { halign: "right", fontStyle: "bold" },
+      },
     });
     after();
 

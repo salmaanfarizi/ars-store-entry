@@ -20,7 +20,13 @@ function parseWrite(body: unknown): TransferWrite | string {
   if (!body || typeof body !== "object") return "Expected a JSON body.";
   const b = body as Record<string, unknown>;
   if (!isIsoDate(b.date)) return "Pick the transfer date.";
-  const kind = b.kind === "direct" || b.kind === "warehouse" ? b.kind : "route";
+  const kind =
+    b.kind === "direct" || b.kind === "warehouse" || b.kind === "adjustment" ? b.kind : "route";
+  const reason = b.adjustReason;
+  const adjustReason =
+    kind === "adjustment" && (reason === "replaced" || reason === "damaged" || reason === "other")
+      ? reason
+      : "";
   const write: TransferWrite = {
     kind,
     date: b.date,
@@ -28,11 +34,19 @@ function parseWrite(body: unknown): TransferWrite | string {
     salesman: text(b.salesman, 80),
     requisitionRef: text(b.requisitionRef, 40),
     invoiceNo: kind === "direct" ? text(b.invoiceNo, 60) : "",
+    adjustReason,
     notes: text(b.notes, 300),
     lines: [],
   };
+  if (kind === "adjustment" && !adjustReason) return "Pick a reason for the adjustment.";
   if (!write.route && !write.salesman) {
-    return kind === "direct" ? "Enter the customer's name." : kind === "warehouse" ? "Pick the warehouse." : "Pick the route or salesman.";
+    return kind === "direct"
+      ? "Enter the customer's name."
+      : kind === "warehouse"
+        ? "Pick the warehouse."
+        : kind === "adjustment"
+          ? "Say what the adjustment is for."
+          : "Pick the route or salesman.";
   }
   if (!Array.isArray(b.lines) || b.lines.length === 0) return "Add at least one item.";
   if (b.lines.length > 100) return "Too many items in one transfer.";

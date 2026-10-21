@@ -110,7 +110,19 @@ export function storeRow(rows: DailyRow[], target: StoreTarget | null): DailyRow
 
 /* ------------------------------ transfer kinds ----------------------------- */
 
-export type TransferKind = "route" | "direct" | "warehouse";
+export type TransferKind = "route" | "direct" | "warehouse" | "adjustment";
+
+/** The reasons an internal adjustment can be made, in the order they are offered. */
+export const ADJUST_REASONS = [
+  { value: "replaced", label: "Replaced sales return" },
+  { value: "damaged", label: "Damaged" },
+  { value: "other", label: "Other" },
+] as const;
+
+export type AdjustReason = (typeof ADJUST_REASONS)[number]["value"];
+
+export const adjustLabel = (r: AdjustReason) =>
+  ADJUST_REASONS.find((x) => x.value === r)?.label ?? "";
 export const WAREHOUSES = ["Riyadh", "Dammam"] as const;
 export type Warehouse = (typeof WAREHOUSES)[number];
 
@@ -118,6 +130,7 @@ export const KIND_LABEL: Record<TransferKind, string> = {
   route: "Salesman route",
   direct: "Direct sale",
   warehouse: "Regional warehouse",
+  adjustment: "Internal adjustment",
 };
 
 /** Riyadh's warehouse is stocked from the Riyadh section; Dammam from the regular ones. */
