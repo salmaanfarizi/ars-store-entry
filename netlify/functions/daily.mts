@@ -51,6 +51,103 @@ function parseNewItem(raw: unknown): NewItem | string {
   return item;
 }
 
+/** The bulk check is a different web app; don't let a slow one hold a save open. */
+const BULK_TIMEOUT_MS = 20_000;
+
+/**
+ * Ask the stock alert whether these production figures fit the bulk, BEFORE anything
+ * is written. Returns null to allow the save, or the message to refuse it with.
+ *
+ * The sheet has had this check since September, as an onEdit trigger. onEdit fires
+ * only when a person edits a cell in the browser — never when a script writes one —
+ * so every entry made through this app went straight past it. On 25 October a typed
+ * entry of 16 units was refused and left its note on the cell; the 194 that ended up
+ * in the same cell, and the 110 on the 27th, came through here and were never
+ * checked. 10 KG ECO reached -1,178 kg.
+ *
+ * The rule is NOT reimplemented here. Which bulk an item draws on, whether the
+ * quantity fits, and the wording of the refusal all come from the alert's own
+ * guardcheck action, because a second copy of those rules is how the peanut and
+ * pumpkin columns went wrong twice. This only asks, and relays the answer.
+ *
+ * It fails CLOSED: if the check cannot be reached, nothing is saved. That is the
+ * deliberate choice — an unchecked entry is what put ECO 1,178 kg under. The escape
+ * hatch is in the sheet, not here: PACKING GUARD on the BULK STOCK tab set to OFF
+ * turns the check off, or WARN lets entries through with a note.
+ */
+async function bulkRefusal(write: DailyWrite): Promise<string | null> {
+  const wanted = write.entries.filter((e) => typeof e.production === "number" && e.production > 0);
+  if (!wanted.length) return null;
+
+  const url = env("SEED_ALERT_URL");
+  const token = env("SEED_ALERT_TOKEN");
+  if (!url || !token) {
+    return "Bulk stock can't be checked yet, so nothing was saved — SEED_ALERT_URL and SEED_ALERT_TOKEN are not set on this site.";
+  }
+
+  let items: { section: string; item: string; added: number }[];
+  try {
+    // The INCREASE, not the figure being written. The cell may already hold
+    // production for the day, and re-saving an unchanged figure must not be refused
+    // for bulk that the first save already spent.
+    const day = await callScript({ method: "GET", params: { tab: write.tab } });
+    const rows = (day.rows as DailyData["rows"] | undefined) ?? [];
+    items = wanted
+      .map((e) => {
+        const was = rows.find((r) => r.section === e.section && r.code === e.code && r.item === e.item);
+        return {
+          section: e.section,
+          item: e.item,
+          added: (e.production as number) - (was?.production ?? 0),
+        };
+      })
+      .filter((x) => x.added > 0);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return `Couldn't read the ${write.tab} tab to check bulk stock, so nothing was saved. ${why}`;
+  }
+  if (!items.length) return null;
+
+  const ask = new URL(url);
+  ask.searchParams.set("token", token);
+  ask.searchParams.set("action", "guardcheck");
+  ask.searchParams.set("items", JSON.stringify(items));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BULK_TIMEOUT_MS);
+  try {
+    const res = await fetch(ask, { redirect: "follow", signal: controller.signal });
+    const body = await res.text();
+    let reply: {
+      ok?: boolean;
+      error?: string;
+      mode?: string;
+      message?: string;
+      blocked?: { text?: string }[];
+    };
+    try {
+      reply = JSON.parse(body) as typeof reply;
+    } catch {
+      return "Bulk stock couldn't be checked, so nothing was saved — the stock alert didn't answer properly. Check it is deployed as a web app with access for Anyone.";
+    }
+    if (reply.ok !== true) {
+      return `Bulk stock couldn't be checked, so nothing was saved: ${reply.error ?? "the stock alert refused the request"}.`;
+    }
+    if (reply.blocked?.length) {
+      const detail = reply.message || reply.blocked.map((b) => b.text ?? "").filter(Boolean).join("\n");
+      return `Not enough bulk stock — nothing was saved.\n${detail}\n\nCount the taste on the dashboard if the bulk is really there, or set PACKING GUARD to WARN on the BULK STOCK tab.`;
+    }
+    return null;
+  } catch (err) {
+    const why = err instanceof Error && err.name === "AbortError"
+      ? "it took too long to answer"
+      : "it could not be reached";
+    return `Bulk stock couldn't be checked (${why}), so nothing was saved. Try again in a moment — or set PACKING GUARD to OFF on the BULK STOCK tab to allow entry without the check.`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Accepts only the fields the script needs, so nothing else reaches the sheet. */
 function parseWrite(body: unknown): DailyWrite | string {
   if (!body || typeof body !== "object") return "Expected a JSON body.";
@@ -195,6 +292,8 @@ export default async (req: Request) => {
   if (typeof parsed === "string") return json({ message: parsed }, 400);
 
   try {
+    const refusal = await bulkRefusal(parsed);
+    if (refusal) return json({ message: refusal }, 409);
     const reply = await callScript({ method: "POST", body: parsed });
     return json({ ok: true, tab: reply.tab, cells: reply.cells ?? 0 });
   } catch (err) {
