@@ -34,6 +34,9 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
   it — each item's opening (first day), production and despatch (summed) and closing (last
   day), the daily totals with absentees — and all its transfers by kind, by item and one by one.
   Past tabs are cached for an hour, so a second report is quick.
+  After the summary it has one section per kind of movement, each on its own page and laid out
+  like the requisition sheet's four tabs: Route Transfers, Direct Sales, Warehouse Transfers and
+  Internal Adjustments, every item line, newest transfer first.
 - **Day PDF** lists orders due, then all items, then low stock moving well, last.
 - Items are read down to the first blank row, so the packing-roll and cover tables under them
   never show up as items.

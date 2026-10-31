@@ -586,23 +586,61 @@ export async function exportMonthPdf(data: MonthData): Promise<void> {
       },
     });
     after();
+  }
 
-    heading("Every transfer");
+  // 4. One section per kind, like the four tabs in the requisition sheet: every line,
+  // newest transfer first, each starting on a new page.
+  const sections = [
+    { kind: "route", title: "Route Transfers", to: "Salesman (route)" },
+    { kind: "direct", title: "Direct Sales", to: "Customer" },
+    { kind: "warehouse", title: "Warehouse Transfers", to: "Warehouse" },
+    { kind: "adjustment", title: "Internal Adjustments", to: "Reason" },
+  ] as const;
+  for (const sec of data.transfers.length ? sections : []) {
+    const ts = data.transfers
+      .filter((t) => t.kind === sec.kind)
+      .slice()
+      .sort((a, b) => (a.docNo < b.docNo ? 1 : a.docNo > b.docNo ? -1 : 0));
+    doc.addPage();
+    y = 16;
+    heading(`${sec.title} (${ts.length} ${ts.length === 1 ? "transfer" : "transfers"}, ${fmt(sum(ts, qty))} units)`);
+    if (!ts.length) {
+      none(`No ${sec.title.toLowerCase()} in this month.`);
+      continue;
+    }
+    const to = (t: Transfer) =>
+      t.kind === "route" ? `${t.salesman || "-"} (${t.route || "-"})` : t.salesman || t.route || "-";
+    const ref = (t: Transfer) =>
+      [t.invoiceNo && `Inv ${t.invoiceNo}`, t.requisitionRef].filter(Boolean).join("  ");
+    const body: string[][] = [];
+    const shade: boolean[] = [];
+    ts.forEach((t, i) => {
+      t.lines.forEach((l, j) => {
+        // The transfer's own details on its first line only, so each one reads as a block.
+        body.push([
+          j === 0 ? shortDate(t.date) : "",
+          j === 0 ? t.docNo : "",
+          j === 0 ? to(t) : "",
+          j === 0 ? ref(t) || (sec.kind === "adjustment" ? t.notes : "") || "" : "",
+          l.code,
+          l.name,
+          l.unit,
+          fmt(l.stockTransfer),
+        ]);
+        shade.push(i % 2 === 1);
+      });
+    });
     autoTable(doc, {
       ...base,
       startY: y,
-      head: [["Date", "Doc no", "Type", "To", "Invoice / requisition", "Items", "Quantity"]],
-      body: data.transfers.map((t) => [
-        shortDate(t.date),
-        t.docNo,
-        kindName[t.kind],
-        t.kind === "route" ? `${t.salesman || "-"} (${t.route || "-"})` : t.salesman || t.route || "-",
-        [t.invoiceNo && `Inv ${t.invoiceNo}`, t.requisitionRef].filter(Boolean).join("  ") || "-",
-        String(t.lines.length),
-        fmt(qty(t)),
-      ]),
-      styles: { fontSize: 7.5, cellPadding: 1.2 },
-      columnStyles: { 5: { halign: "right" }, 6: { halign: "right" } },
+      head: [["Date", "Doc no", sec.to, sec.kind === "adjustment" ? "Note" : "Invoice / requisition", "Code", "Item", "Unit", "Qty"]],
+      body,
+      foot: [["", "", "", "", "", "Total", "", right(sum(ts, qty))]],
+      styles: { fontSize: 7, cellPadding: 1.1 },
+      columnStyles: { 2: { cellWidth: 30 }, 3: { cellWidth: 26 }, 5: { cellWidth: 62 }, 7: { halign: "right", fontStyle: "bold" } },
+      didParseCell: (cell) => {
+        if (cell.section === "body" && shade[cell.row.index]) cell.cell.styles.fillColor = [244, 245, 250];
+      },
     });
   }
 
