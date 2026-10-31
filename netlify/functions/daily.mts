@@ -111,6 +111,9 @@ async function bulkRefusal(write: DailyWrite): Promise<string | null> {
   const ask = new URL(url);
   ask.searchParams.set("token", token);
   ask.searchParams.set("action", "guardcheck");
+  // The day tab being written, so the alert can measure bulk against what that tab holds
+  // now instead of SUMMARY's ten-minute-old snapshot. Ignored by an alert that predates it.
+  ask.searchParams.set("tab", write.tab);
   ask.searchParams.set("items", JSON.stringify(items));
 
   const controller = new AbortController();
