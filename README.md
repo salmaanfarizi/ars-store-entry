@@ -30,6 +30,10 @@ browser ──► /api/daily (team passcode) ──► Apps Script web app (shar
   `apps-script/next-day-api.gs`, added to the sheet's script project and deployed as a web app
   at `NEXTDAY_SCRIPT_URL`), so the app and the menu build identical days. The last day needs its
   absentees first; carried orders without a date carry undated.
+- **Months fold up in the requisition sheet.** Transfers and its four views (Route Transfers,
+  Direct Sales, Warehouse Transfers, Internal Adjustments) are grouped by month on created_at:
+  past months collapsed, the current one open. `groupTransferMonths` redoes it nightly once
+  `setupMonthGroups` has been run from the editor; it changes only the grouping.
 - **Monthly report** (Daily entry → *Month report*): pick a month for one PDF of every day tab in
   it — each item's opening (first day), production and despatch (summed) and closing (last
   day), the daily totals with absentees — and all its transfers by kind, by item and one by one.

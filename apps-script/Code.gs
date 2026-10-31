@@ -1133,6 +1133,81 @@ function readMonth_(ss, month) {
   };
 }
 
+/* --------------------------- month row groups --------------------------- */
+
+/** The tabs of the requisition sheet whose rows fold by month: Transfers and its four views. */
+const MONTH_GROUP_TABS = ['Transfers', 'Route Transfers', 'Direct Sales', 'Warehouse Transfers', 'Internal Adjustments'];
+
+/** "2026-10-22 12:33:24", a date cell or a date serial → "2026-10"; '' when it isn't one. */
+function monthOf_(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) return Utilities.formatDate(v, TIME_ZONE, 'yyyy-MM');
+  // A date stored as a plain number (days since 30 Dec 1899), as a few rows hold it.
+  if (typeof v === 'number' && v > 30000 && v < 80000) {
+    return Utilities.formatDate(new Date(Math.round((v - 25569) * 86400000)), 'UTC', 'yyyy-MM');
+  }
+  const t = String(v == null ? '' : v).trim();
+  if (/^\d{4}-\d{2}/.test(t)) return t.slice(0, 7);
+  return '';
+}
+
+/**
+ * Folds each tab's rows into one group per month, by created_at (column O), so a month can be
+ * collapsed with its +/− button. A month's first row stays outside its group as the visible
+ * row the button sits on, which also keeps neighbouring months from merging into one group.
+ * Past months are collapsed, the current one is left open. Safe to run again: it clears the
+ * old groups first, and touches nothing but grouping.
+ */
+function groupTransferMonths() {
+  const ss = SpreadsheetApp.openById(REQ_SHEET_ID);
+  const current = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM');
+  MONTH_GROUP_TABS.forEach(function (name) {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet || sheet.getMaxRows() < 3) return;
+    const all = sheet.getRange(2, 1, sheet.getMaxRows() - 1, 1);
+    for (let d = 0; d < 8; d++) {
+      try {
+        all.shiftRowGroupDepth(-1);
+      } catch (err) {
+        break; // nothing left to ungroup
+      }
+    }
+    const last = sheet.getLastRow();
+    if (last < 3) return;
+    const created = sheet.getRange(2, 15, last - 1, 1).getValues();
+    const runs = [];
+    created.forEach(function (r, i) {
+      const m = monthOf_(r[0]);
+      if (!m) return;
+      const row = i + 2;
+      const run = runs[runs.length - 1];
+      if (run && run.month === m && run.end === row - 1) run.end = row;
+      else runs.push({ month: m, start: row, end: row });
+    });
+    runs.forEach(function (run) {
+      if (run.end <= run.start) return;
+      sheet.getRange(run.start + 1, 1, run.end - run.start, 1).shiftRowGroupDepth(1);
+    });
+    sheet.setRowGroupControlPosition(SpreadsheetApp.GroupControlTogglePosition.BEFORE);
+    runs.forEach(function (run) {
+      if (run.end <= run.start) return;
+      const group = sheet.getRowGroup(run.start + 1, 1);
+      if (!group) return;
+      if (run.month < current) group.collapse();
+      else group.expand();
+    });
+  });
+}
+
+/** Run once from the editor: groups the months now and every night at about 1 am. */
+function setupMonthGroups() {
+  const has = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'groupTransferMonths';
+  });
+  if (!has) ScriptApp.newTrigger('groupTransferMonths').timeBased().everyDays(1).atHour(1).inTimezone(TIME_ZONE).create();
+  groupTransferMonths();
+  Logger.log('Transfers and its four tabs are grouped by month; regrouped nightly.');
+}
+
 /* -------------------------------- setup -------------------------------- */
 
 /** Run once from the editor: checks it can read the sheet and shows what it found. */
